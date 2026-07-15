@@ -41,6 +41,34 @@ exports and labeled via a learned rule engine with user confirmation.
 - Tests: Vitest (unit/integration, in-memory or tempfile SQLite), Playwright (e2e)
 - Runs with one command (`npm run dev`); production-ish mode via one command too
 
+
+## Validation
+
+An implementation is validated only when all of the following hold, in order:
+
+1. `npm run typecheck && npm run lint` — clean.
+2. `npm test` — all Vitest suites green. Integration tests use in-memory or
+   tempfile SQLite; never touch `data/*.db`.
+3. Seed a known dataset: `npm run seed:test` loads fixtures with known
+   totals (fixture expectations live in `fixtures/expected.json`).
+4. Exercise the real app: start `npm run dev`, then verify the changed
+   behavior end-to-end via Playwright (`npm run e2e`, plus a targeted spec
+   for the new feature if one doesn't exist — write it).
+5. Evidence requirements:
+   - For any change touching import, categorization, or computation:
+     assert computed balances/reports against `fixtures/expected.json`
+     and include the assertion output.
+   - For any UI change: Playwright screenshot of the changed view with
+     seeded data visible.
+6. Numbers shown in the UI must reconcile with numbers computed by the API
+   for the same seed data. A mismatch is a critical finding, not a rounding
+   footnote.
+
+### Not covered by automated validation (escalate instead)
+
+- Anything requiring my real transaction data.
+- Visual/aesthetic judgment beyond "renders without error".
+
 ## Repo layout
 
 ```
