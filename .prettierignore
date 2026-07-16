@@ -1,0 +1,8 @@
+node_modules/
+dist/
+build/
+**/drizzle/**
+fixtures/*.csv
+fixtures/**/*.csv
+packages/web/playwright-report/
+packages/web/test-results/

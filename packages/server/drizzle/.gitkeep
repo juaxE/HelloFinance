@@ -1,0 +1,2 @@
+# Drizzle migrations live here. Generated via `npm run db:generate -w @finance/server`.
+# Empty until specs/001-data-model.md is approved and its schema is added.

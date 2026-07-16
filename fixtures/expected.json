@@ -1,0 +1,239 @@
+{
+  "generatedBy": "fixtures/generate.mjs",
+  "seed": 1597463007,
+  "note": "Synthetic S-Pankki data. Owner is the placeholder \"Matti Meikäläinen\". Never real data.",
+  "owner": {
+    "outgoingName": "MATTI MEIKÄLÄINEN",
+    "incomingName": "Meikäläinen Matti"
+  },
+  "files": {
+    "main": {
+      "path": "synthetic/main-2025-07_2026-06.csv",
+      "encoding": "utf-8",
+      "account": "main",
+      "rowCount": 336,
+      "months": [
+        "2025-07",
+        "2025-08",
+        "2025-09",
+        "2025-10",
+        "2025-11",
+        "2025-12",
+        "2026-01",
+        "2026-02",
+        "2026-03",
+        "2026-04",
+        "2026-05",
+        "2026-06"
+      ]
+    },
+    "buffer": {
+      "path": "synthetic/buffer-2025-07_2026-06.csv",
+      "encoding": "utf-8",
+      "account": "buffer",
+      "rowCount": 17
+    },
+    "overlap": {
+      "path": "synthetic/overlap-2026-06_2026-07.csv",
+      "encoding": "utf-8",
+      "account": "main",
+      "rowCount": 42,
+      "sharedWithMain": 28,
+      "newRows": 14
+    },
+    "encodingLatin1": {
+      "path": "synthetic/encoding-2025-06-latin1.csv",
+      "encoding": "iso-8859-1",
+      "account": "main",
+      "rowCount": 33,
+      "sampleDecodedPayer": "MATTI MEIKÄLÄINEN"
+    }
+  },
+  "dedup": {
+    "mainRowCount": 336,
+    "overlapRowCount": 42,
+    "overlapSharedWithMain": 28,
+    "overlapNewRows": 14,
+    "unionUniqueArchiveIds": 350
+  },
+  "typeHints": {
+    "palkkaRowsMain": 12,
+    "omaTilisiirtoRowsMain": 17
+  },
+  "cashFlowMain": {
+    "byMonth": {
+      "2025-07": {
+        "incomeCents": 285607,
+        "expensesCents": 122830,
+        "netCents": 162777,
+        "transferExcludedCents": -16556
+      },
+      "2025-08": {
+        "incomeCents": 284328,
+        "expensesCents": 120589,
+        "netCents": 163739,
+        "transferExcludedCents": 3074
+      },
+      "2025-09": {
+        "incomeCents": 279775,
+        "expensesCents": 122242,
+        "netCents": 157533,
+        "transferExcludedCents": -13841
+      },
+      "2025-10": {
+        "incomeCents": 280839,
+        "expensesCents": 113904,
+        "netCents": 166935,
+        "transferExcludedCents": 12553
+      },
+      "2025-11": {
+        "incomeCents": 283638,
+        "expensesCents": 106658,
+        "netCents": 176980,
+        "transferExcludedCents": -7786
+      },
+      "2025-12": {
+        "incomeCents": 286075,
+        "expensesCents": 123292,
+        "netCents": 162783,
+        "transferExcludedCents": -11748
+      },
+      "2026-01": {
+        "incomeCents": 286826,
+        "expensesCents": 126141,
+        "netCents": 160685,
+        "transferExcludedCents": 3261
+      },
+      "2026-02": {
+        "incomeCents": 282794,
+        "expensesCents": 119299,
+        "netCents": 163495,
+        "transferExcludedCents": -12643
+      },
+      "2026-03": {
+        "incomeCents": 280447,
+        "expensesCents": 120105,
+        "netCents": 160342,
+        "transferExcludedCents": -8776
+      },
+      "2026-04": {
+        "incomeCents": 283413,
+        "expensesCents": 124630,
+        "netCents": 158783,
+        "transferExcludedCents": 10592
+      },
+      "2026-05": {
+        "incomeCents": 286265,
+        "expensesCents": 123710,
+        "netCents": 162555,
+        "transferExcludedCents": 25926
+      },
+      "2026-06": {
+        "incomeCents": 280729,
+        "expensesCents": 120790,
+        "netCents": 159939,
+        "transferExcludedCents": -5452
+      }
+    },
+    "totalIncomeCents": 3400736,
+    "totalExpensesCents": 1444190,
+    "totalNetCents": 1956546,
+    "totalTransferExcludedCents": -21396
+  },
+  "incomeSourcesMain": {
+    "byMonth": {
+      "2025-07": {
+        "salaryCents": 285607,
+        "otherInflowCents": 0
+      },
+      "2025-08": {
+        "salaryCents": 284328,
+        "otherInflowCents": 0
+      },
+      "2025-09": {
+        "salaryCents": 277140,
+        "otherInflowCents": 2635
+      },
+      "2025-10": {
+        "salaryCents": 280839,
+        "otherInflowCents": 0
+      },
+      "2025-11": {
+        "salaryCents": 282133,
+        "otherInflowCents": 1505
+      },
+      "2025-12": {
+        "salaryCents": 285757,
+        "otherInflowCents": 318
+      },
+      "2026-01": {
+        "salaryCents": 284741,
+        "otherInflowCents": 2085
+      },
+      "2026-02": {
+        "salaryCents": 281832,
+        "otherInflowCents": 962
+      },
+      "2026-03": {
+        "salaryCents": 276032,
+        "otherInflowCents": 4415
+      },
+      "2026-04": {
+        "salaryCents": 281660,
+        "otherInflowCents": 1753
+      },
+      "2026-05": {
+        "salaryCents": 283891,
+        "otherInflowCents": 2374
+      },
+      "2026-06": {
+        "salaryCents": 278825,
+        "otherInflowCents": 1904
+      }
+    },
+    "totalSalaryCents": 3382785,
+    "totalOtherInflowCents": 17951
+  },
+  "normalizationExamples": [
+    {
+      "raw": "PAYPAL *SPOTIFY*P41B7F3E9",
+      "normalized": "SPOTIFY"
+    },
+    {
+      "raw": "VFI*BIO REX CINEMAS OY",
+      "normalized": "BIO REX CINEMAS OY"
+    },
+    {
+      "raw": "MOB.PAY*RYDE FINLAND OY",
+      "normalized": "RYDE FINLAND OY"
+    },
+    {
+      "raw": "PAYPAL *WOLT",
+      "normalized": "WOLT"
+    },
+    {
+      "raw": "Subway 65975 REDI",
+      "normalized": "SUBWAY"
+    },
+    {
+      "raw": "Alepa Porvoonkatu",
+      "normalized": "ALEPA"
+    },
+    {
+      "raw": "Alepa Kamppi",
+      "normalized": "ALEPA"
+    },
+    {
+      "raw": "K-Market Kamppi 4021",
+      "normalized": "K-MARKET"
+    },
+    {
+      "raw": "S-market Ympyratalo",
+      "normalized": "S-MARKET"
+    },
+    {
+      "raw": "Lidl Helsinki Vallila",
+      "normalized": "LIDL"
+    }
+  ]
+}
