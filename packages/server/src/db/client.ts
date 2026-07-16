@@ -5,7 +5,9 @@ import { drizzle, type BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from './schema';
 import { DATABASE_PATH } from '../config';
 
-export type Db = BetterSQLite3Database<typeof schema>;
+// Drizzle's `drizzle()` return intersects the base type with `{ $client }` (the
+// raw better-sqlite3 handle); preserve it so pragma/introspection stays typed.
+export type Db = BetterSQLite3Database<typeof schema> & { $client: Database.Database };
 
 /**
  * Open a Drizzle client over a better-sqlite3 connection.

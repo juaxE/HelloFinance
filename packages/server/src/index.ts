@@ -1,7 +1,12 @@
 import { buildApp } from './app';
 import { HOST, PORT } from './config';
+import { getDb } from './db/client';
+import { runMigrations } from './db/migrate';
 
-const app = buildApp();
+const db = getDb();
+runMigrations(db);
+
+const app = buildApp(db);
 
 app
   .listen({ host: HOST, port: PORT })

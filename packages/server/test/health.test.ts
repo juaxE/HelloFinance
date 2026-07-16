@@ -1,12 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../src/app';
+import { createTestDb } from './helpers';
 
 describe('GET /health', () => {
   let app: FastifyInstance;
 
   beforeAll(async () => {
-    app = buildApp();
+    app = buildApp(createTestDb());
     await app.ready();
   });
 
