@@ -189,8 +189,10 @@ function generateMonth(mainRows, bufferRows, y, m, { partialUpToDay } = {}) {
   if (within(1)) {
     emit(mainRows, dateUTC(y, m, 1), -6270, 'KORTTIOSTO', { counterparty: 'HSL Mobiili' });
   }
-  // Gym (Subscriptions), ~2nd.
-  if (within(2)) {
+  // Gym (Subscriptions), ~2nd. Deliberate one-month gap (2026-02) seeds an
+  // "absent due-month" reconciliation case: a monthly named line is due but no
+  // matching transaction exists that month (spec 003 unmatched/pending display).
+  if (within(2) && !(y === 2026 && m === 2)) {
     emit(mainRows, dateUTC(y, m, 2), -4990, 'KORTTIOSTO', { counterparty: 'ELIXIA HELSINKI' });
   }
   // Subscriptions with messy processor prefixes/codes.
@@ -201,6 +203,39 @@ function generateMonth(mainRows, bufferRows, y, m, { partialUpToDay } = {}) {
   }
   if (within(18)) {
     emit(mainRows, dateUTC(y, m, 18), -1599, 'KORTTIOSTO', { counterparty: 'NETFLIX.COM' });
+  }
+
+  // --- Non-monthly recurring charges (cadence: quarterly / yearly) -----------
+  // Real charges so spec 003 budget cadence (interval_months) can reconcile a
+  // quarterly and a yearly template against actual transactions. Named-line
+  // counterparties: they normalize to themselves (no brand merge).
+  // Yearly home insurance (E-LASKU; interval_months=12), once a year ~Oct 15.
+  if (m === 10 && within(15)) {
+    emit(mainRows, dateUTC(y, m, 15), -60000, 'E-LASKU', {
+      counterparty: 'LÄHITAPIOLA',
+      iban: 'FI47 5000 1520 0000 21 ',
+      bic: 'OKOYFIHH',
+      reference: '00000000000900900902',
+    });
+  }
+  // Quarterly self-storage (KORTTIOSTO; interval_months=3), Jan/Apr/Jul/Oct ~20th.
+  if ((m === 1 || m === 4 || m === 7 || m === 10) && within(20)) {
+    emit(mainRows, dateUTC(y, m, 20), -8700, 'KORTTIOSTO', {
+      counterparty: 'PELICAN SELF STORAGE',
+    });
+  }
+  // Yearly automobile-association fee (E-LASKU; interval_months=12) with a
+  // deliberate one-month drift: nominally due February, but this year it POSTS in
+  // March (2026-03). Seeds the strict-matching negative case — a Feb-anchored
+  // yearly template must NOT grab the March charge, so the Feb line stays pending
+  // and the March charge shows as unbudgeted (drift visible, not silently absorbed).
+  if (y === 2026 && m === 3) {
+    emit(mainRows, dateUTC(y, m, 5), -13900, 'E-LASKU', {
+      counterparty: 'AUTOLIITTO',
+      iban: 'FI33 1660 0000 0088 77 ',
+      bic: 'NDEAFIHH',
+      reference: '00000000000700700705',
+    });
   }
 
   // Groceries: 8–12 per month.
@@ -442,6 +477,22 @@ function incomeSources(rows) {
   return { byMonth, totalSalaryCents: salary, totalOtherInflowCents: other };
 }
 
+// Non-monthly recurring charges (spec 003 cadence). Summarizes the seeded
+// quarterly/yearly charges by their normalized counterparty so cadence tests can
+// assert occurrence months, per-occurrence amount, and interval without hard-coding.
+function recurringSummary(rows, normalizedKey, intervalMonths) {
+  const list = rows.filter((r) => normalize(r._counterparty ?? '') === normalizedKey);
+  return {
+    normalizedCounterparty: normalizedKey,
+    type: list[0]?.type ?? null,
+    intervalMonths,
+    amountCentsEach: list[0]?.amountCents ?? null,
+    occurrences: list.length,
+    months: list.map((r) => r._month).sort(),
+    totalCents: list.reduce((s, r) => s + r.amountCents, 0),
+  };
+}
+
 const expected = {
   generatedBy: 'fixtures/generate.mjs',
   seed: SEED,
@@ -493,6 +544,26 @@ const expected = {
   // model) is asserted once seed labeling exists.
   cashFlowMain: cashFlow(mainRows),
   incomeSourcesMain: incomeSources(mainRows),
+  // Seeded non-monthly charges for spec 003 cadence reconciliation (decision
+  // 001-H): a yearly insurance and a quarterly storage fee, both named lines.
+  recurringNonMonthly: {
+    yearly: recurringSummary(mainRows, 'LÄHITAPIOLA', 12),
+    quarterly: recurringSummary(mainRows, 'PELICAN SELF STORAGE', 3),
+  },
+  // Negative reconciliation cases that validate strict within-month matching
+  // (spec 003): a due month whose expected charge is absent, and a yearly bill
+  // that drifted one month past its nominal due month. Happy-path fixtures can't
+  // exercise the unmatched/pending display or prove drift stays visible.
+  recurringNegativeCases: {
+    absentDueMonth: {
+      ...recurringSummary(mainRows, 'ELIXIA HELSINKI', 1),
+      absentMonth: '2026-02',
+    },
+    driftedYearly: (() => {
+      const s = recurringSummary(mainRows, 'AUTOLIITTO', 12);
+      return { ...s, nominalDueMonth: '2026-02', actualMonth: s.months[0] ?? null };
+    })(),
+  },
   normalizationExamples: NORMALIZATION_SAMPLES.map((raw) => ({ raw, normalized: normalize(raw) })),
 };
 

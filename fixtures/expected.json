@@ -11,7 +11,7 @@
       "path": "synthetic/main-2025-07_2026-06.csv",
       "encoding": "utf-8",
       "account": "main",
-      "rowCount": 336,
+      "rowCount": 349,
       "months": [
         "2025-07",
         "2025-08",
@@ -31,7 +31,7 @@
       "path": "synthetic/buffer-2025-07_2026-06.csv",
       "encoding": "utf-8",
       "account": "buffer",
-      "rowCount": 17
+      "rowCount": 18
     },
     "overlap": {
       "path": "synthetic/overlap-2026-06_2026-07.csv",
@@ -45,16 +45,16 @@
       "path": "synthetic/encoding-2025-06-latin1.csv",
       "encoding": "iso-8859-1",
       "account": "main",
-      "rowCount": 33,
+      "rowCount": 34,
       "sampleDecodedPayer": "MATTI MEIKÄLÄINEN"
     }
   },
   "dedup": {
-    "mainRowCount": 336,
+    "mainRowCount": 349,
     "overlapRowCount": 42,
     "overlapSharedWithMain": 28,
     "overlapNewRows": 14,
-    "unionUniqueArchiveIds": 350
+    "unionUniqueArchiveIds": 363
   },
   "typeHints": {
     "palkkaRowsMain": 12,
@@ -63,136 +63,200 @@
   "cashFlowMain": {
     "byMonth": {
       "2025-07": {
-        "incomeCents": 285607,
-        "expensesCents": 122830,
-        "netCents": 162777,
-        "transferExcludedCents": -16556
+        "incomeCents": 291420,
+        "expensesCents": 122820,
+        "netCents": 168600,
+        "transferExcludedCents": 2655
       },
       "2025-08": {
-        "incomeCents": 284328,
-        "expensesCents": 120589,
-        "netCents": 163739,
-        "transferExcludedCents": 3074
+        "incomeCents": 281699,
+        "expensesCents": 117210,
+        "netCents": 164489,
+        "transferExcludedCents": 6849
       },
       "2025-09": {
-        "incomeCents": 279775,
-        "expensesCents": 122242,
-        "netCents": 157533,
-        "transferExcludedCents": -13841
+        "incomeCents": 285875,
+        "expensesCents": 115305,
+        "netCents": 170570,
+        "transferExcludedCents": -11675
       },
       "2025-10": {
-        "incomeCents": 280839,
-        "expensesCents": 113904,
-        "netCents": 166935,
-        "transferExcludedCents": 12553
+        "incomeCents": 281829,
+        "expensesCents": 191359,
+        "netCents": 90470,
+        "transferExcludedCents": -6957
       },
       "2025-11": {
-        "incomeCents": 283638,
-        "expensesCents": 106658,
-        "netCents": 176980,
-        "transferExcludedCents": -7786
+        "incomeCents": 284041,
+        "expensesCents": 131687,
+        "netCents": 152354,
+        "transferExcludedCents": 3430
       },
       "2025-12": {
-        "incomeCents": 286075,
-        "expensesCents": 123292,
-        "netCents": 162783,
-        "transferExcludedCents": -11748
+        "incomeCents": 284934,
+        "expensesCents": 123485,
+        "netCents": 161449,
+        "transferExcludedCents": 17936
       },
       "2026-01": {
-        "incomeCents": 286826,
-        "expensesCents": 126141,
-        "netCents": 160685,
-        "transferExcludedCents": 3261
+        "incomeCents": 291283,
+        "expensesCents": 138240,
+        "netCents": 153043,
+        "transferExcludedCents": -5139
       },
       "2026-02": {
-        "incomeCents": 282794,
-        "expensesCents": 119299,
-        "netCents": 163495,
-        "transferExcludedCents": -12643
+        "incomeCents": 287198,
+        "expensesCents": 117468,
+        "netCents": 169730,
+        "transferExcludedCents": 7675
       },
       "2026-03": {
-        "incomeCents": 280447,
-        "expensesCents": 120105,
-        "netCents": 160342,
-        "transferExcludedCents": -8776
+        "incomeCents": 279994,
+        "expensesCents": 129789,
+        "netCents": 150205,
+        "transferExcludedCents": -12935
       },
       "2026-04": {
-        "incomeCents": 283413,
-        "expensesCents": 124630,
-        "netCents": 158783,
-        "transferExcludedCents": 10592
+        "incomeCents": 288132,
+        "expensesCents": 130342,
+        "netCents": 157790,
+        "transferExcludedCents": 8640
       },
       "2026-05": {
-        "incomeCents": 286265,
-        "expensesCents": 123710,
-        "netCents": 162555,
-        "transferExcludedCents": 25926
+        "incomeCents": 278670,
+        "expensesCents": 123879,
+        "netCents": 154791,
+        "transferExcludedCents": 12257
       },
       "2026-06": {
-        "incomeCents": 280729,
-        "expensesCents": 120790,
-        "netCents": 159939,
-        "transferExcludedCents": -5452
+        "incomeCents": 283254,
+        "expensesCents": 125425,
+        "netCents": 157829,
+        "transferExcludedCents": -10398
       }
     },
-    "totalIncomeCents": 3400736,
-    "totalExpensesCents": 1444190,
-    "totalNetCents": 1956546,
-    "totalTransferExcludedCents": -21396
+    "totalIncomeCents": 3418329,
+    "totalExpensesCents": 1567009,
+    "totalNetCents": 1851320,
+    "totalTransferExcludedCents": 12338
   },
   "incomeSourcesMain": {
     "byMonth": {
       "2025-07": {
         "salaryCents": 285607,
-        "otherInflowCents": 0
+        "otherInflowCents": 5813
       },
       "2025-08": {
-        "salaryCents": 284328,
-        "otherInflowCents": 0
+        "salaryCents": 276529,
+        "otherInflowCents": 5170
       },
       "2025-09": {
-        "salaryCents": 277140,
-        "otherInflowCents": 2635
+        "salaryCents": 283466,
+        "otherInflowCents": 2409
       },
       "2025-10": {
-        "salaryCents": 280839,
-        "otherInflowCents": 0
+        "salaryCents": 281283,
+        "otherInflowCents": 546
       },
       "2025-11": {
-        "salaryCents": 282133,
-        "otherInflowCents": 1505
+        "salaryCents": 282463,
+        "otherInflowCents": 1578
       },
       "2025-12": {
-        "salaryCents": 285757,
-        "otherInflowCents": 318
+        "salaryCents": 284934,
+        "otherInflowCents": 0
       },
       "2026-01": {
-        "salaryCents": 284741,
-        "otherInflowCents": 2085
+        "salaryCents": 286895,
+        "otherInflowCents": 4388
       },
       "2026-02": {
-        "salaryCents": 281832,
-        "otherInflowCents": 962
+        "salaryCents": 285533,
+        "otherInflowCents": 1665
       },
       "2026-03": {
-        "salaryCents": 276032,
-        "otherInflowCents": 4415
+        "salaryCents": 277848,
+        "otherInflowCents": 2146
       },
       "2026-04": {
-        "salaryCents": 281660,
-        "otherInflowCents": 1753
+        "salaryCents": 287120,
+        "otherInflowCents": 1012
       },
       "2026-05": {
-        "salaryCents": 283891,
-        "otherInflowCents": 2374
+        "salaryCents": 276350,
+        "otherInflowCents": 2320
       },
       "2026-06": {
-        "salaryCents": 278825,
-        "otherInflowCents": 1904
+        "salaryCents": 283254,
+        "otherInflowCents": 0
       }
     },
-    "totalSalaryCents": 3382785,
-    "totalOtherInflowCents": 17951
+    "totalSalaryCents": 3391282,
+    "totalOtherInflowCents": 27047
+  },
+  "recurringNonMonthly": {
+    "yearly": {
+      "normalizedCounterparty": "LÄHITAPIOLA",
+      "type": "E-LASKU",
+      "intervalMonths": 12,
+      "amountCentsEach": -60000,
+      "occurrences": 1,
+      "months": [
+        "2025-10"
+      ],
+      "totalCents": -60000
+    },
+    "quarterly": {
+      "normalizedCounterparty": "PELICAN SELF STORAGE",
+      "type": "KORTTIOSTO",
+      "intervalMonths": 3,
+      "amountCentsEach": -8700,
+      "occurrences": 4,
+      "months": [
+        "2025-07",
+        "2025-10",
+        "2026-01",
+        "2026-04"
+      ],
+      "totalCents": -34800
+    }
+  },
+  "recurringNegativeCases": {
+    "absentDueMonth": {
+      "normalizedCounterparty": "ELIXIA HELSINKI",
+      "type": "KORTTIOSTO",
+      "intervalMonths": 1,
+      "amountCentsEach": -4990,
+      "occurrences": 11,
+      "months": [
+        "2025-07",
+        "2025-08",
+        "2025-09",
+        "2025-10",
+        "2025-11",
+        "2025-12",
+        "2026-01",
+        "2026-03",
+        "2026-04",
+        "2026-05",
+        "2026-06"
+      ],
+      "totalCents": -54890,
+      "absentMonth": "2026-02"
+    },
+    "driftedYearly": {
+      "normalizedCounterparty": "AUTOLIITTO",
+      "type": "E-LASKU",
+      "intervalMonths": 12,
+      "amountCentsEach": -13900,
+      "occurrences": 1,
+      "months": [
+        "2026-03"
+      ],
+      "totalCents": -13900,
+      "nominalDueMonth": "2026-02",
+      "actualMonth": "2026-03"
+    }
   },
   "normalizationExamples": [
     {
