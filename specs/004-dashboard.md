@@ -50,7 +50,11 @@ Definitions:
 - **Per-category expense** (a month) = per expense category, −Σ of amounts, a
   positive magnitude.
 - **Account balance at date D** = `opening_balance_cents` +
-  Σ `amount_cents` for that account with `payment_date ≤ D`.
+  Σ `amount_cents` for that account with
+  `opening_balance_date ≤ payment_date ≤ D` (the lower bound is dropped when
+  `opening_balance_date` is null). This is the pinned opening-balance boundary from
+  decision 001-A — it is what stops back-filled history from double-counting, and
+  the net-worth formula below inherits it through this definition.
 - **Net worth at month M** (end of month) — see formula below.
 
 ```text
@@ -63,6 +67,16 @@ The emergency fund is the **buffer Account**, so its balance is already in the
 account term — it is not a separate asset (decision 001-D). Snapshots are carried
 forward: the latest one with `month ≤ M` (decision 004-B) — so a month with no new
 snapshot reuses the last entered value instead of dropping to zero.
+
+- **Normalized monthly commitments** (read-only planning indicator, decision
+  003-E) = Σ over recurring templates active this month of
+  `round(amount_cents / interval_months)`. It smooths non-monthly bills into a
+  monthly-equivalent figure — a 600 €/yr insurance counts as ~50 €/mo, an 87 €/qtr
+  storage fee as 29 €/mo — so the reader sees their true ongoing commitment without
+  the calendar spikes. It is **display only**: it never enters budgets,
+  reconciliation, or net worth (those use real transactions), so per-template
+  rounding to whole cents is harmless. "Active this month" =
+  `start_month ≤ current ≤ end_month` (end open ⇒ ongoing).
 
 ## API surface
 
@@ -83,6 +97,10 @@ or an explicit `from`/`to` (decision 004-C):
   by magnitude; reimbursement-heavy categories can go negative.
 - `GET /api/dashboard/budget-vs-actual?month=YYYY-MM` → summary delegating to
   spec 003 (per-line + totals), shaped for the dashboard card.
+- `GET /api/dashboard/recurring-commitments` →
+  `{ normalizedMonthlyCents, byTemplate: [{ templateId, name, amountCents,
+intervalMonths, monthlyEquivalentCents }] }` — the read-only normalized monthly
+  commitments indicator for the current month (decision 003-E).
 
 Asset management + snapshot entry:
 
@@ -110,6 +128,10 @@ A single dashboard route, responsive card grid (Recharts for charts):
 - **Budget vs. actual** (current month): compact planned/actual/variance list or
   progress bars; links to the full Budgets month view (003); reads
   `/budget-vs-actual`.
+- **Recurring commitments** (stat tile): "≈ X €/mo" normalized monthly commitments
+  (decision 003-E), with each active template's monthly-equivalent on expand.
+  Clearly labeled an estimate (it smooths quarterly/yearly bills); links to the
+  Budgets templates view; reads `/recurring-commitments`.
 - **Asset snapshot entry**: a small form/modal listing each asset with the current
   month's value pre-filled (carried forward if not yet entered); Save `PUT`s the
   month's snapshot. Loans are entered as positive balances and shown subtracted in
@@ -139,9 +161,14 @@ Assert against `fixtures/expected.json` (CLAUDE.md validation §5, §6):
 4. Carry-forward: a month with no new asset snapshot uses the most recent prior
    snapshot per asset.
 5. Budget-vs-actual totals equal spec 003's reconciliation for the same month.
-6. **UI ↔ API tie-out**: the numbers rendered on the dashboard (read from the
+6. Normalized monthly commitments = Σ `round(amount_cents / interval_months)` over
+   templates active in the month (e.g. a 600 €/yr + an 87 €/qtr + a 1000 €/mo
+   template → 5000 + 2900 + 100000 = 107900 cents). The figure is the same in every
+   month regardless of which charge is due, and it does not affect the cash-flow or
+   budget totals.
+7. **UI ↔ API tie-out**: the numbers rendered on the dashboard (read from the
    Playwright DOM) equal the API responses for the same seed — asserted, not eyeballed.
-7. Playwright screenshot of the dashboard with seeded data visible in every card.
+8. Playwright screenshot of the dashboard with seeded data visible in every card.
 
 ## Deferred (needs a new approved spec)
 
@@ -169,4 +196,5 @@ Assert against `fixtures/expected.json` (CLAUDE.md validation §5, §6):
 - **004-D — Current (partial) month.** ✅ Show the current month as **"month to
   date"**.
 
-No open questions remain for this spec.
+No open questions remain for this spec. The normalized monthly commitments tile
+follows decision **003-E** = (a): a read-only dashboard indicator, budgets untouched.

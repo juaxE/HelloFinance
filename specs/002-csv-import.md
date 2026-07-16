@@ -128,6 +128,12 @@ export const stagedTransactions = sqliteTable('staged_transactions', {
   dupState: text('dup_state', {
     enum: ['new', 'duplicate_existing', 'duplicate_in_batch'],
   }).notNull(),
+  // When dup_state='duplicate_existing', the account the existing row belongs to —
+  // lets the review UI explain a CSV imported into the wrong account (step 3).
+  duplicateAccountId: integer('duplicate_account_id').references(() => accounts.id),
+  // payment_date < the target account's opening_balance_date: outside the balance
+  // window (decision 001-A), so NOT committed by default (step 6).
+  beforeOpening: integer('before_opening', { mode: 'boolean' }).notNull().default(false),
   proposedCategoryId: integer('proposed_category_id').references(() => categories.id),
   proposedSource: text('proposed_source', { enum: ['manual', 'rule', 'type_hint'] }),
   // user decisions during review:
@@ -147,10 +153,21 @@ import's staged rows are deleted. (Staging lives in the local SQLite DB — stil
    are held in memory only; the uploaded file is never written to disk.
 2. **Detect + parse** — adapter yields rows + encoding. Create an `imports` row
    (`status='pending_review'`).
-3. **Dedup** — for each row compute `archive_id` and `content_hash`. Mark:
-   - `duplicate_existing` if `archive_id` already in `transactions`;
+3. **Dedup + boundary check** — for each row compute `archive_id` and
+   `content_hash`. Mark `dup_state`:
+   - `duplicate_existing` if `archive_id` already in `transactions` — also record
+     the **existing row's `account_id`** in `duplicate_account_id`, so a file
+     imported into the wrong account surfaces as "already imported into <account>"
+     rather than a baffling "0 inserted, all duplicates" (archive_id uniqueness is
+     global, decision 001-B / spec 001);
    - `duplicate_in_batch` if the same `archive_id` appears earlier in this file;
    - else `new`.
+
+   Then set `before_opening = true` for any row whose `payment_date` is earlier
+   than the target account's `opening_balance_date` (skipped when that date is
+   null). Such rows sit outside the balance window (decision 001-A) and are held
+   back at commit.
+
 4. **Propose labels** — for each `new` row: type hint first; else a `labeling_rules`
    match on `normalized_counterparty`; else none (proposed null). Record
    `proposed_source`.
@@ -165,6 +182,20 @@ import's staged rows are deleted. (Staging lives in the local SQLite DB — stil
      user set/overrode it,
      `'type_hint'` if it came from a Tapahtumalaji hint (Transfer/Income) with no
      user or rule override, else `'rule'` (decision 002-A). `'manual'` always wins.
+   - **Rows dated before the opening balance are excluded (decision 001-A):** a
+     `new` row with `before_opening = true` is **not** inserted — committing it
+     would place a transaction outside the account's balance window, invisible to
+     the balance. The review summary flags these and offers a one-click **"Extend
+     history"** assist (decision 002-E): set `opening_balance_date` to the earliest
+     excluded row's `payment_date` and recompute
+     `opening_balance_cents := old_opening − Σ(excluded amount_cents)`, then
+     re-analyze so the rows fall in-window. This is exact, not an estimate — the
+     excluded rows are the _complete, contiguous_ history between the new and old
+     dates (a bank export has no gaps), so `old_opening = new_opening + Σ(excluded)`
+     by construction; the account balance at every date ≥ the old opening date is
+     unchanged and only the older history becomes visible, with no statement lookup.
+     (A manual date/amount edit stays available.) There is deliberately no "commit
+     anyway" that would leave a row outside the window.
    - **Uncategorized allowed (decision 002-C):** a `new` row the user left
      unlabeled commits with `category_id = null` and `category_source = null`. It
      can be labeled later from the transactions list. The commit endpoint requires
@@ -216,7 +247,12 @@ counts: { total, new, duplicates }, groups: [...] }`.
 
 - **Import page**: drag-drop / file picker + account selector → "Analyze".
 - **Review screen**: a summary banner ("42 new, 7 duplicates skipped, encoding:
-  ISO-8859-1"). Below, one collapsible card per `normalized_counterparty` group
+  ISO-8859-1"). When duplicates already live in a **different** account than the
+  import target, the banner names it ("7 duplicates — already imported into 'Main
+  account'") so a wrong-account upload is obvious rather than a silent no-op. Rows
+  dated **before the account's opening balance** are called out with a fix-it link
+  to the account's opening-balance setting (they are not committed as-is). Below,
+  one collapsible card per `normalized_counterparty` group
   showing the raw example, count, total amount, a category dropdown, an "apply to
   all N" affordance (the group control just is the bulk control), and a "remember
   as rule" checkbox. Groups already covered by an existing rule are pre-filled and
@@ -258,8 +294,20 @@ Assert against `fixtures/expected.json` (CLAUDE.md validation §5):
    "remember rule", a subsequent import of a new row in that group is auto-labeled
    from the persisted rule.
 8. Manual override beats a matching rule and persists as `category_source='manual'`.
-9. Playwright: screenshot of the review screen against seeded data with groups and
-   duplicate count visible.
+9. A file whose rows already exist in a **different** account reports them as
+   duplicates attributed to that account (banner names it) and inserts nothing —
+   not a silent "0 inserted".
+10. A row dated before the target account's `opening_balance_date` is flagged
+    `before_opening` and excluded from commit; lowering the account's
+    `opening_balance_date` to cover it turns it into a normal in-window committed
+    row on re-analyze.
+11. The **"Extend history"** assist (002-E) sets `opening_balance_date` to the
+    earliest excluded row and `opening_balance_cents = old_opening −
+Σ(excluded amount_cents)`; after re-analyze the previously-excluded rows commit
+    in-window **and** the account balance at every date ≥ the old opening date is
+    unchanged (cent-for-cent).
+12. Playwright: screenshot of the review screen against seeded data with groups and
+    duplicate count visible.
 
 ## Deferred (needs a new approved spec)
 
@@ -267,6 +315,16 @@ Assert against `fixtures/expected.json` (CLAUDE.md validation §5):
 - Automatic transfer **pair-matching** across accounts (OMA TILISIIRTO in/out).
 - Split transactions during review.
 - Fuzzy/token normalization beyond the deterministic rules above.
+
+## Assumption: archive_id globally unique (owner-accepted 2026-07-16)
+
+Global `archive_id` uniqueness (spec 001) assumes S-Pankki `Arkistointitunnus` is
+unique **across all of the owner's accounts**, not just within one (it reads as a
+date + sequence, so it very likely is). The owner **accepted this assumption for
+now** (2026-07-16). It can't be verified in the dev cycle — all fixtures are
+synthetic and no real export enters agent context (CLAUDE.md #5) — so it stays a
+watch item: if a genuine cross-account collision ever appears in a real import,
+revisit whether the constraint should become `(account_id, archive_id)`.
 
 ## Resolved decisions (owner, 2026-07-15)
 
@@ -283,5 +341,14 @@ Assert against `fixtures/expected.json` (CLAUDE.md validation §5):
   "needs review" is obvious in the UI.
 - **002-D — Account inference.** ✅ Target account is chosen manually at upload (no
   IBAN inference).
+- **002-E — "Extend history" opening-balance recompute (owner request,
+  2026-07-16).** ✅ When an import contains rows dated before the account's
+  `opening_balance_date`, the app offers a one-click recompute instead of leaving
+  the arithmetic to the user: lower the opening date to the earliest excluded row
+  and set `opening_balance_cents := old_opening − Σ(excluded amount_cents)`. Exact
+  because the export's excluded rows are the complete history bridging the two
+  dates, so recent balances are preserved and only older history appears. Closes
+  the ergonomic gap where "lower the opening date" silently also required knowing
+  the balance at a year-old date.
 
 No open questions remain for this spec.

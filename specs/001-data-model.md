@@ -45,14 +45,23 @@ import { sql, relations } from 'drizzle-orm';
 export const accounts = sqliteTable('accounts', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull(),
-  kind: text('kind', { enum: ['main', 'buffer'] })
+  // Display label only — nothing in specs 003/004 branches on kind; net-worth math
+  // counts every account equally (the buffer/emergency fund is NOT special-cased).
+  // Left open-ended so a future savings/other account fits without a migration.
+  kind: text('kind', { enum: ['main', 'buffer', 'savings', 'other'] })
     .notNull()
     .default('main'),
   iban: text('iban'), // normalized (no spaces); may be null for cash-like accounts
-  // The bank CSV has no running-balance column, so current balance is
-  // opening_balance_cents + sum(transactions.amount_cents). The opening balance
-  // is the account balance immediately BEFORE opening_balance_date, entered
-  // manually. See decision 001-A.
+  // The bank CSV has no running-balance column, so a balance is derived:
+  //   balance(D) = opening_balance_cents
+  //              + Σ amount_cents WHERE opening_balance_date ≤ payment_date ≤ D
+  // opening_balance_cents is the real balance at the START of opening_balance_date
+  // (immediately before the first transaction counted). Only transactions on/after
+  // that date count, so setting the opening balance from a recent statement and
+  // then back-filling older history does NOT double count — rows dated before
+  // opening_balance_date fall outside the window and are rejected at import
+  // (spec 002). Null opening_balance_date ⇒ no lower bound, opening 0 (fresh
+  // account). Spec 004 net-worth math inherits this exact boundary. Decision 001-A.
   openingBalanceCents: integer('opening_balance_cents').notNull().default(0),
   openingBalanceDate: text('opening_balance_date'), // YYYY-MM-DD, nullable
   createdAt: integer('created_at', { mode: 'timestamp_ms' })
@@ -144,14 +153,29 @@ export const transactions = sqliteTable(
     createdAt: integer('created_at', { mode: 'timestamp_ms' })
       .notNull()
       .$defaultFn(() => new Date()),
+    // Bumped by the app on every mutation (relabel, note edit). Transactions are
+    // mutable after import; every other mutable table already tracks this.
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+      .notNull()
+      .$defaultFn(() => new Date()),
   },
   (t) => ({
     // Multiple NULL archive_ids are allowed (SQLite treats NULLs as distinct),
     // so this both enforces S-Pankki idempotency and permits future null rows.
+    // Global (not per-account) on purpose: it also catches a CSV imported into the
+    // wrong account as duplicates instead of silently double-importing (see 002).
     archiveIdUq: uniqueIndex('uq_transactions_archive_id').on(t.archiveId),
     accountDateIdx: index('idx_transactions_account_payment_date').on(t.accountId, t.paymentDate),
     categoryIdx: index('idx_transactions_category').on(t.categoryId),
     counterpartyIdx: index('idx_transactions_counterparty').on(t.counterparty),
+    importIdIdx: index('idx_transactions_import_id').on(t.importId), // provenance lookups
+    // Invariant: a row is either fully categorized (id + source) or fully
+    // uncategorized (both null). Guards against a "categorized but sourceless" row
+    // that would break the review/relabel filtering in spec 002.
+    categorySourceCk: check(
+      'ck_transactions_category_source',
+      sql`(category_id is null) = (category_source is null)`,
+    ),
   }),
 );
 
@@ -182,29 +206,51 @@ export const labelingRules = sqliteTable(
 
 // --- Recurring templates ---------------------------------------------------
 // Named recurring expense; materialized into budget lines per month (spec 003).
-export const recurringTemplates = sqliteTable('recurring_templates', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-  name: text('name').notNull(),
-  categoryId: integer('category_id')
-    .notNull()
-    .references(() => categories.id),
-  // Expected magnitude of the expense, stored positive. See decision 001-C.
-  amountCents: integer('amount_cents').notNull(),
-  expectedDayOfMonth: integer('expected_day_of_month').notNull(), // 1..31, clamped
-  startDate: text('start_date').notNull(), // YYYY-MM-DD (first month it applies)
-  endDate: text('end_date'), // nullable; inclusive last month it applies
-  // How the materialized line reconciles against actual transactions: named
-  // lines match by this normalized counterparty (spec 003). Null => the line
-  // reconciles at category level only.
-  matchNormalizedCounterparty: text('match_normalized_counterparty'),
-  note: text('note'), // optional plan rationale; snapshotted onto budget lines
-  createdAt: integer('created_at', { mode: 'timestamp_ms' })
-    .notNull()
-    .$defaultFn(() => new Date()),
-  updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
-    .notNull()
-    .$defaultFn(() => new Date()),
-});
+export const recurringTemplates = sqliteTable(
+  'recurring_templates',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    name: text('name').notNull(),
+    categoryId: integer('category_id')
+      .notNull()
+      .references(() => categories.id),
+    // Magnitude billed EACH occurrence, stored positive (decision 001-C). NOT a
+    // monthly-normalized figure: a 600 €/yr insurance is amount_cents=60000 with
+    // interval_months=12, and materializes a single 600 € line in its due month —
+    // not 50 €/month. See decision 001-H.
+    amountCents: integer('amount_cents').notNull(),
+    // Billing cadence in months: 1 = monthly, 3 = quarterly, 6 = semi-annual,
+    // 12 = yearly (any interval ≥ 1 allowed). start_month is the anchor phase: the
+    // template is "due" in month M iff monthsBetween(start_month, M) is a
+    // non-negative multiple of interval_months and M is within [start, end]. The
+    // due-month formula and materialization live in spec 003.
+    intervalMonths: integer('interval_months').notNull().default(1),
+    // 1..31 (CHECK below); clamped to short months at materialization (spec 003),
+    // which is behavior, not schema.
+    expectedDayOfMonth: integer('expected_day_of_month').notNull(),
+    // Month granularity — templates apply per whole month, so there is no
+    // day-level ambiguity about whether a mid-month start counts (was YYYY-MM-DD).
+    // start_month is both the first eligible month and the cadence anchor;
+    // end_month (nullable) is the inclusive last eligible month.
+    startMonth: text('start_month').notNull(), // YYYY-MM
+    endMonth: text('end_month'), // YYYY-MM, nullable; inclusive last month
+    // How the materialized line reconciles against actual transactions: named
+    // lines match by this normalized counterparty (spec 003). Null => the line
+    // reconciles at category level only.
+    matchNormalizedCounterparty: text('match_normalized_counterparty'),
+    note: text('note'), // optional plan rationale; snapshotted onto budget lines
+    createdAt: integer('created_at', { mode: 'timestamp_ms' })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => ({
+    intervalCk: check('ck_recurring_interval_months', sql`interval_months >= 1`),
+    dayCk: check('ck_recurring_expected_day', sql`expected_day_of_month between 1 and 31`),
+  }),
+);
 
 // --- Budgets (a materialized month) ---------------------------------------
 export const budgets = sqliteTable(
@@ -223,29 +269,39 @@ export const budgets = sqliteTable(
 // --- Budget lines ----------------------------------------------------------
 // Snapshot of a template at materialization time, OR an ad-hoc one-off line.
 // Editing a template does NOT retroactively change already-materialized lines.
-export const budgetLines = sqliteTable('budget_lines', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-  budgetId: integer('budget_id')
-    .notNull()
-    .references(() => budgets.id),
-  // Provenance only; the line carries its own snapshot values below.
-  templateId: integer('template_id').references(() => recurringTemplates.id),
-  kind: text('kind', { enum: ['recurring', 'adhoc'] }).notNull(),
-  name: text('name').notNull(),
-  categoryId: integer('category_id')
-    .notNull()
-    .references(() => categories.id),
-  amountCents: integer('amount_cents').notNull(), // planned magnitude, positive
-  expectedDayOfMonth: integer('expected_day_of_month'), // nullable for ad-hoc
-  matchNormalizedCounterparty: text('match_normalized_counterparty'), // named-line reconciliation
-  note: text('note'), // optional; snapshotted from the template at materialization, editable per month
-  createdAt: integer('created_at', { mode: 'timestamp_ms' })
-    .notNull()
-    .$defaultFn(() => new Date()),
-  updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
-    .notNull()
-    .$defaultFn(() => new Date()),
-});
+export const budgetLines = sqliteTable(
+  'budget_lines',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    budgetId: integer('budget_id')
+      .notNull()
+      .references(() => budgets.id),
+    // Provenance only; the line carries its own snapshot values below.
+    templateId: integer('template_id').references(() => recurringTemplates.id),
+    kind: text('kind', { enum: ['recurring', 'adhoc'] }).notNull(),
+    name: text('name').notNull(),
+    categoryId: integer('category_id')
+      .notNull()
+      .references(() => categories.id),
+    amountCents: integer('amount_cents').notNull(), // planned magnitude, positive
+    expectedDayOfMonth: integer('expected_day_of_month'), // nullable for ad-hoc
+    matchNormalizedCounterparty: text('match_normalized_counterparty'), // named-line reconciliation
+    note: text('note'), // optional; snapshotted from the template at materialization, editable per month
+    createdAt: integer('created_at', { mode: 'timestamp_ms' })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => ({
+    // Snapshot lines store the already-clamped day; ad-hoc lines may leave it null.
+    dayCk: check(
+      'ck_budget_lines_expected_day',
+      sql`expected_day_of_month is null or expected_day_of_month between 1 and 31`,
+    ),
+  }),
+);
 
 // --- Assets + snapshots ----------------------------------------------------
 // Manual monthly values for things NOT tracked as bank accounts.
@@ -290,7 +346,7 @@ export const imports = sqliteTable('imports', {
     .notNull()
     .references(() => accounts.id),
   filename: text('filename').notNull(),
-  encodingDetected: text('encoding_detected').notNull(), // 'utf-8' | 'iso-8859-1'
+  encodingDetected: text('encoding_detected', { enum: ['utf-8', 'iso-8859-1'] }).notNull(),
   rowCount: integer('row_count').notNull().default(0),
   insertedCount: integer('inserted_count').notNull().default(0),
   duplicateCount: integer('duplicate_count').notNull().default(0),
@@ -337,9 +393,12 @@ the foundational reference resources every later spec assumes:
 - `GET /api/accounts`, `POST /api/accounts`, `PATCH /api/accounts/:id`
   (name, kind, iban, opening balance + date).
 - `GET /api/categories`, `POST /api/categories`, `PATCH /api/categories/:id`
-  (rename, reorder, color, `is_income_source`, archive). System categories cannot
-  be deleted or have their `system_key` changed; the Income built-in stays
-  `is_income_source=true`.
+  (rename, reorder, color, `is_income_source`, archive). **System categories**
+  (Transfer, Income) are locked in four ways the PATCH/DELETE handlers enforce:
+  they cannot be **deleted**, **archived**, or have their `system_key` changed, and
+  their `is_income_source` is fixed (Transfer stays `false`, Income stays `true`).
+  Archiving Transfer would silently break the transfer-exclusion rule across every
+  aggregate, so it is rejected rather than "improved".
 
 Transaction, import, budget, and dashboard endpoints live in their own specs.
 
@@ -363,6 +422,12 @@ shown but locked.
    insert of either violates `uq_categories_system_key`.
 6. All timestamps round-trip as `Date` via Drizzle; business dates round-trip as
    `YYYY-MM-DD` strings.
+7. `ck_transactions_category_source` rejects a half-set row (category_id present
+   with null category_source, and the reverse); a fully-null and a fully-set row
+   both insert.
+8. The recurring-template CHECKs reject `interval_months = 0` and
+   `expected_day_of_month = 32`; `interval_months` defaults to 1 (monthly) when
+   omitted.
 
 ## Deferred (needs a new approved spec)
 
@@ -373,9 +438,18 @@ shown but locked.
 
 ## Resolved decisions (owner, 2026-07-15)
 
-- **001-A — Account opening balance.** ✅ Manual `opening_balance_cents` +
-  `opening_balance_date` per account ("balance immediately before the first
-  imported transaction"), entered in Settings.
+- **001-A — Account opening balance (semantics pinned).** ✅ Manual
+  `opening_balance_cents` + `opening_balance_date` per account, entered in Settings.
+  `opening_balance_cents` is the real balance at the **start of**
+  `opening_balance_date`, and the derived balance counts only transactions with
+  `payment_date ≥ opening_balance_date`:
+  `balance(D) = opening + Σ amount WHERE opening_balance_date ≤ payment_date ≤ D`.
+  This closes a double-count (found in review): you can set the opening balance from
+  a recent statement and still back-fill older history without inflating the
+  balance — rows dated before `opening_balance_date` are outside the window and are
+  **rejected at import** (spec 002) so nothing silently falls off the ledger. Null
+  `opening_balance_date` ⇒ no lower bound, opening 0 (fresh account). Spec 004
+  net-worth math inherits this boundary verbatim.
 - **001-B — Fallback dedup hash.** ✅ No uniqueness constraint on `content_hash`
   for now (S-Pankki uses `archive_id`; a `content_hash` unique would wrongly
   reject two genuinely-identical small purchases the same day). `content_hash` is
@@ -393,5 +467,17 @@ shown but locked.
 - **001-G — Uncategorized.** ✅ `category_id = null` (no row) for the
   not-yet-reviewed state; **Other** remains a distinct reviewed catch-all category.
   UI shows the two differently.
+- **001-H — Non-monthly billing cadence (owner request, 2026-07-16).** ✅ Recurring
+  templates carry `interval_months` (1 monthly / 3 quarterly / 12 yearly / any ≥ 1)
+  anchored on `start_month`; `amount_cents` is the per-occurrence charge, not a
+  monthly average. A template materializes a budget line **only in its due months**
+  (spec 003), so a yearly bill appears once, at full amount, in the month it is
+  actually charged and reconciles against that real transaction — clean tracking
+  without a fake monthly line. An amortized "monthly-equivalent commitments" figure
+  is surfaced **read-only** on the dashboard (Σ `amount_cents / interval_months`;
+  decision 003-E → spec 004), leaving budgets on real due-month charges — reporting,
+  not this schema.
 
-No open questions remain for this spec.
+No open questions remain. The reporting question this schema enabled (003-E,
+amortized view of non-monthly bills) is resolved in specs 003/004 as a read-only
+dashboard stat.
