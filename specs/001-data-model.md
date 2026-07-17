@@ -1,6 +1,6 @@
 # Spec 001 — Data model (MVP schema)
 
-Status: **draft, awaiting owner approval**
+Status: **approved & implemented (2026-07-16)**
 Depends on: nothing. Depended on by: 002 (import), 003 (budgets), 004 (dashboard).
 
 ## Purpose
@@ -96,7 +96,9 @@ export const categories = sqliteTable(
       .$defaultFn(() => new Date()),
   },
   (t) => ({
-    nameUq: uniqueIndex('uq_categories_name').on(t.name),
+    // Case-insensitive name uniqueness (decision 001-I): 'Groceries'/'groceries'
+    // collide, so a human-typed flat list can't accumulate case-only duplicates.
+    nameUq: uniqueIndex('uq_categories_name').on(sql`${t.name} collate nocase`),
     systemKeyUq: uniqueIndex('uq_categories_system_key').on(t.systemKey), // at most one of each
   }),
 );
@@ -394,11 +396,13 @@ the foundational reference resources every later spec assumes:
   (name, kind, iban, opening balance + date).
 - `GET /api/categories`, `POST /api/categories`, `PATCH /api/categories/:id`
   (rename, reorder, color, `is_income_source`, archive). **System categories**
-  (Transfer, Income) are locked in four ways the PATCH/DELETE handlers enforce:
-  they cannot be **deleted**, **archived**, or have their `system_key` changed, and
-  their `is_income_source` is fixed (Transfer stays `false`, Income stays `true`).
-  Archiving Transfer would silently break the transfer-exclusion rule across every
-  aggregate, so it is rejected rather than "improved".
+  (Transfer, Income) are locked in **five** ways the PATCH/DELETE handlers enforce:
+  they cannot be **deleted**, **renamed** (decision 001-I), **archived**, or have
+  their `system_key` changed, and their `is_income_source` is fixed (Transfer stays
+  `false`, Income stays `true`). Archiving Transfer would silently break the
+  transfer-exclusion rule across every aggregate; renaming it would let it
+  masquerade as an ordinary category while still being excluded — so both are
+  rejected rather than "improved".
 
 Transaction, import, budget, and dashboard endpoints live in their own specs.
 
@@ -408,6 +412,13 @@ No dedicated screen. Accounts and categories are managed from a **Settings** are
 a list of accounts (name, kind, IBAN, opening balance + date) and an editable,
 reorderable category list with color swatches and an archive action. Built-ins are
 shown but locked.
+
+> **Implementation status (2026-07-16):** the schema, migrations, category seed,
+> and the accounts/categories reference API are implemented and validated (all
+> acceptance criteria below pass; verified end-to-end over HTTP). The **Settings
+> UI above is intentionally deferred** (owner decision) — it will be built
+> alongside the import/dashboard work, where seeded data can validate it. The
+> backend surface it needs is already in place.
 
 ## Acceptance criteria
 
@@ -477,6 +488,19 @@ shown but locked.
   is surfaced **read-only** on the dashboard (Σ `amount_cents / interval_months`;
   decision 003-E → spec 004), leaving budgets on real due-month charges — reporting,
   not this schema.
+- **001-I — Category-name uniqueness + system-rename lock (owner, 2026-07-16, during
+  implementation review).** ✅ Two category-integrity decisions surfaced by fresh-
+  context review: (1) `uq_categories_name` is **case-insensitive** (`collate nocase`)
+  so 'Groceries'/'groceries' can't both exist — the right behavior for a human-typed
+  flat list and it backs the POST 409 dedup. (2) System categories **cannot be
+  renamed** (the fourth lock becomes a fifth), closing the footgun where a renamed
+  Transfer looks ordinary in pickers yet stays excluded from every aggregate. Recolor
+  and reorder remain allowed for system categories. The `collate nocase` migration
+  drops+recreates the index; it is safe here because all three migrations first-apply
+  together to a fresh DB (nothing released), so the recreate never meets a
+  pre-existing case-only duplicate. Were this ever applied to a DB that already
+  contained case-colliding names, the `CREATE UNIQUE INDEX` would (correctly) abort
+  until the duplicate is resolved.
 
 No open questions remain. The reporting question this schema enabled (003-E,
 amortized view of non-monthly bills) is resolved in specs 003/004 as a read-only

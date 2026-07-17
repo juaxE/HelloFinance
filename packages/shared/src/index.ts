@@ -1,9 +1,12 @@
 /**
  * @finance/shared — Zod schemas and types shared between the API and the UI.
  *
- * Intentionally empty of domain logic during scaffolding. Domain schemas
- * (Account, Transaction, Category, budgets, etc.) are introduced per the
- * approved specs under `specs/`, starting with 001-data-model.md.
+ * Domain schemas are added per the approved specs under `specs/`. Spec 001
+ * introduces the reference resources every later spec assumes: accounts and
+ * categories. Money is always integer cents; timestamps cross the wire as
+ * epoch-ms integers; business dates as `YYYY-MM-DD` strings.
  */
 
-export const SHARED_PACKAGE_NAME = '@finance/shared' as const;
+export * from './common';
+export * from './account';
+export * from './category';

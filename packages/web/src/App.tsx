@@ -1,8 +1,8 @@
-import { SHARED_PACKAGE_NAME } from '@finance/shared';
+import { ACCOUNT_KINDS } from '@finance/shared';
 
 /**
- * Placeholder application shell. Real views (dashboard, import/review, budgets)
- * are added per the approved specs under `specs/`. The import from
+ * Placeholder application shell. Real views (dashboard, import/review, budgets,
+ * settings) are added per the approved specs under `specs/`. The import from
  * `@finance/shared` exists to prove the monorepo wiring end-to-end.
  */
 export function App() {
@@ -18,7 +18,7 @@ export function App() {
       <h1>HelloFinance</h1>
       <p>Local-first personal finance tracker. Scaffolding is in place.</p>
       <p style={{ color: '#666', fontSize: '0.9rem' }}>
-        Shared package wired: <code>{SHARED_PACKAGE_NAME}</code>
+        Shared package wired: <code>{ACCOUNT_KINDS.length} account kinds</code>
       </p>
     </main>
   );
