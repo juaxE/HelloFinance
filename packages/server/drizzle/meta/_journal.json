@@ -22,6 +22,13 @@
       "when": 1784234337839,
       "tag": "0002_categories_name_nocase",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1784292730406,
+      "tag": "0003_staged_transactions",
+      "breakpoints": true
     }
   ]
 }

@@ -11,8 +11,8 @@
  *   - `PRAGMA foreign_keys = ON` on every connection (see db/client.ts).
  *
  * Schema changes go through Drizzle migrations only (non-negotiable #6) — never
- * hand-edit the database. `staged_transactions` (the import review buffer) is
- * intentionally NOT here; it belongs to the import pipeline (spec 002).
+ * hand-edit the database. `staged_transactions` (the import review buffer, spec
+ * 002) lives here too since it is a real table, just a pre-commit one.
  */
 
 import { sqliteTable, integer, text, uniqueIndex, index, check } from 'drizzle-orm/sqlite-core';
@@ -206,6 +206,57 @@ export const labelingRules = sqliteTable(
   }),
 );
 
+// --- Staged transactions (pre-commit import review buffer, spec 002) ------
+// Parsed rows live here from analyze until commit/discard; a committed or
+// discarded import's staged rows are deleted (still 100% local, no privacy
+// concern in keeping them in the same DB).
+export const stagedTransactions = sqliteTable(
+  'staged_transactions',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    importId: integer('import_id')
+      .notNull()
+      .references(() => imports.id),
+    paymentDate: text('payment_date').notNull(),
+    bookingDate: text('booking_date').notNull(),
+    amountCents: integer('amount_cents').notNull(),
+    type: text('type').notNull(),
+    payer: text('payer'),
+    payee: text('payee'),
+    counterparty: text('counterparty').notNull(),
+    normalizedCounterparty: text('normalized_counterparty').notNull(),
+    counterpartyIban: text('counterparty_iban'),
+    counterpartyBic: text('counterparty_bic'),
+    reference: text('reference'),
+    message: text('message'),
+    archiveId: text('archive_id'),
+    contentHash: text('content_hash').notNull(),
+    // dedup + review state
+    dupState: text('dup_state', {
+      enum: ['new', 'duplicate_existing', 'duplicate_in_batch'],
+    }).notNull(),
+    // When dup_state='duplicate_existing', the account the existing row belongs
+    // to — lets the review UI explain a CSV imported into the wrong account.
+    duplicateAccountId: integer('duplicate_account_id').references(() => accounts.id),
+    // payment_date < the target account's opening_balance_date: outside the
+    // balance window (decision 001-A), so NOT committed by default.
+    beforeOpening: integer('before_opening', { mode: 'boolean' }).notNull().default(false),
+    proposedCategoryId: integer('proposed_category_id').references(() => categories.id),
+    proposedSource: text('proposed_source', { enum: ['manual', 'rule', 'type_hint'] }),
+    // user decisions during review:
+    chosenCategoryId: integer('chosen_category_id').references(() => categories.id),
+    rememberRule: integer('remember_rule', { mode: 'boolean' }).notNull().default(false),
+    note: text('note'), // optional per-row note, copied to transactions on commit
+  },
+  (t) => ({
+    importIdIdx: index('idx_staged_transactions_import_id').on(t.importId),
+    normalizedIdx: index('idx_staged_transactions_normalized').on(
+      t.importId,
+      t.normalizedCounterparty,
+    ),
+  }),
+);
+
 // --- Recurring templates ---------------------------------------------------
 // Named recurring expense; materialized into budget lines per month (spec 003).
 export const recurringTemplates = sqliteTable(
@@ -357,6 +408,23 @@ export const categoriesRelations = relations(categories, ({ many }) => ({
 export const importsRelations = relations(imports, ({ one, many }) => ({
   account: one(accounts, { fields: [imports.accountId], references: [accounts.id] }),
   transactions: many(transactions),
+  stagedTransactions: many(stagedTransactions),
+}));
+
+export const stagedTransactionsRelations = relations(stagedTransactions, ({ one }) => ({
+  import: one(imports, { fields: [stagedTransactions.importId], references: [imports.id] }),
+  duplicateAccount: one(accounts, {
+    fields: [stagedTransactions.duplicateAccountId],
+    references: [accounts.id],
+  }),
+  proposedCategory: one(categories, {
+    fields: [stagedTransactions.proposedCategoryId],
+    references: [categories.id],
+  }),
+  chosenCategory: one(categories, {
+    fields: [stagedTransactions.chosenCategoryId],
+    references: [categories.id],
+  }),
 }));
 
 export const transactionsRelations = relations(transactions, ({ one }) => ({

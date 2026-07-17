@@ -1,8 +1,10 @@
-import type { Account, Category } from '@finance/shared';
-import type { accounts, categories } from '../db/schema';
+import type { Account, Category, LabelingRule, Transaction } from '@finance/shared';
+import type { accounts, categories, labelingRules, transactions } from '../db/schema';
 
 type AccountRow = typeof accounts.$inferSelect;
 type CategoryRow = typeof categories.$inferSelect;
+type TransactionRow = typeof transactions.$inferSelect;
+type LabelingRuleRow = typeof labelingRules.$inferSelect;
 
 /** DB row -> API shape: timestamps become epoch-ms integers. */
 export function serializeAccount(row: AccountRow): Account {
@@ -27,6 +29,42 @@ export function serializeCategory(row: CategoryRow): Category {
     sortOrder: row.sortOrder,
     archivedAt: row.archivedAt ? row.archivedAt.getTime() : null,
     createdAt: row.createdAt.getTime(),
+  };
+}
+
+export function serializeTransaction(row: TransactionRow): Transaction {
+  return {
+    id: row.id,
+    accountId: row.accountId,
+    paymentDate: row.paymentDate,
+    bookingDate: row.bookingDate,
+    amountCents: row.amountCents,
+    type: row.type,
+    payer: row.payer,
+    payee: row.payee,
+    counterparty: row.counterparty,
+    counterpartyIban: row.counterpartyIban,
+    counterpartyBic: row.counterpartyBic,
+    reference: row.reference,
+    message: row.message,
+    archiveId: row.archiveId,
+    categoryId: row.categoryId,
+    categorySource: row.categorySource,
+    note: row.note,
+    importId: row.importId,
+    createdAt: row.createdAt.getTime(),
+    updatedAt: row.updatedAt.getTime(),
+  };
+}
+
+export function serializeLabelingRule(row: LabelingRuleRow): LabelingRule {
+  return {
+    id: row.id,
+    normalizedCounterparty: row.normalizedCounterparty,
+    categoryId: row.categoryId,
+    exampleRaw: row.exampleRaw,
+    createdAt: row.createdAt.getTime(),
+    updatedAt: row.updatedAt.getTime(),
   };
 }
 

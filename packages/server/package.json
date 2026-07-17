@@ -10,9 +10,11 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate"
+    "db:migrate": "drizzle-kit migrate",
+    "seed:test": "tsx src/scripts/seed-test.ts"
   },
   "dependencies": {
+    "@fastify/multipart": "^10.1.0",
     "@finance/shared": "*",
     "better-sqlite3": "^12.2.0",
     "drizzle-orm": "^0.36.4",
