@@ -1,6 +1,6 @@
 # Spec 002 — CSV import & labeling
 
-Status: draft, awaiting owner approval
+Status: approved, 2026-07-17
 Depends on: 001 (schema). Depended on by: 003, 004 (they read committed transactions).
 
 ## Purpose
