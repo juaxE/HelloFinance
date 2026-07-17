@@ -1,6 +1,6 @@
 # Spec 001 — Data model (MVP schema)
 
-Status: **approved & implemented (2026-07-16)**
+Status: approved, 2026-07-16
 Depends on: nothing. Depended on by: 002 (import), 003 (budgets), 004 (dashboard).
 
 ## Purpose
@@ -124,8 +124,19 @@ export const transactions = sqliteTable(
     // Derived at import: payee when amount<0 (outgoing), payer when amount>0
     // (incoming). This is what labeling/normalization run on.
     counterparty: text('counterparty').notNull(),
+    // Payee account number (Saajan tilinumero), normalized (no whitespace).
+    // Retained as source data only — NOT read by any current computation. Kept
+    // because it is the reliable key for the deferred transfer pair-matching
+    // feature and is irreproducible once the source CSV is gone (decision 002-F).
+    // Null for card purchases and all incoming rows (S-Pankki exports no payer
+    // account number).
     counterpartyIban: text('counterparty_iban'), // normalized, nullable
-    counterpartyBic: text('counterparty_bic'), // normalized, nullable
+    // SUPERSEDED by decision 002-F: this column shipped in the (merged) 001
+    // migration but stores the counterparty's *bank*, not their account, with no
+    // tracking or matching value. It is removed by a DROP-COLUMN migration in
+    // spec 002 — 001's migration is not amended. Kept here, struck through, so
+    // 001 stays a faithful record of what it built.
+    counterpartyBic: text('counterparty_bic'), // DROPPED by 002-F (migration lives in 002)
     reference: text('reference'), // Viitenumero, nullable
     message: text('message'), // Viesti, unwrapped, nullable
 

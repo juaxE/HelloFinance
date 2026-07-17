@@ -1,7 +1,8 @@
 # Spec 003 — Budgets (recurring templates, months, reconciliation)
 
-Status: **draft, awaiting owner approval**
+Status: draft, awaiting owner approval
 Depends on: 001 (schema), 002 (committed transactions to reconcile against).
+Depended on by: 004 (dashboard reads this spec's budget reconciliation).
 
 ## Purpose
 

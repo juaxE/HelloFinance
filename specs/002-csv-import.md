@@ -1,6 +1,6 @@
 # Spec 002 — CSV import & labeling
 
-Status: **draft, awaiting owner approval**
+Status: draft, awaiting owner approval
 Depends on: 001 (schema). Depended on by: 003, 004 (they read committed transactions).
 
 ## Purpose
@@ -25,8 +25,7 @@ export interface ParsedTransaction {
   payer: string | null; // Maksaja
   payee: string | null; // Saajan nimi
   counterparty: string; // payee if amountCents<0 else payer (raw, pre-normalization)
-  counterpartyIban: string | null; // spaces stripped
-  counterpartyBic: string | null; // spaces stripped
+  counterpartyIban: string | null; // Saajan tilinumero, spaces stripped; source-only (decision 002-F)
   reference: string | null; // Viitenumero
   message: string | null; // Viesti, unwrapped
   archiveId: string | null; // Arkistointitunnus (null only for future banks)
@@ -61,8 +60,11 @@ All verified against `fixtures/` (CLAUDE.md "S-Pankki CSV adapter"):
 - **Empty sentinel**: a bare `'-'` (apostrophe-dash) means empty → `null`.
 - **Message (Viesti)**: wrapped as a leading apostrophe + quotes
   (`'Palkka kaudelta 4/2026'`). Unwrap to the inner text; `'-'` → `null`.
-- **IBAN / BIC**: may contain stray internal/trailing spaces
-  (`FI98 3939 1111 1111 86 `, `SBAN FI HH`). Normalize by removing all whitespace.
+- **IBAN** (Saajan tilinumero): may contain stray internal/trailing spaces
+  (`FI98 3939 1111 1111 86 `). Normalize by removing all whitespace. Stored as
+  source-only data, never read by import/labeling/dedup (decision 002-F). The
+  **BIC** column (Saajan BIC-tunnus) is parsed past for header mapping but **not
+  extracted or stored** (decision 002-F).
 - **counterparty (for labeling)**: `payee` (Saajan nimi) when `amountCents < 0`
   (outgoing), `payer` (Maksaja) when `amountCents > 0` (incoming). Zero-amount rows
   are not expected; if one appears, treat as outgoing and flag in the import log.
@@ -118,8 +120,7 @@ export const stagedTransactions = sqliteTable('staged_transactions', {
   payee: text('payee'),
   counterparty: text('counterparty').notNull(),
   normalizedCounterparty: text('normalized_counterparty').notNull(),
-  counterpartyIban: text('counterparty_iban'),
-  counterpartyBic: text('counterparty_bic'),
+  counterpartyIban: text('counterparty_iban'), // source-only (decision 002-F)
   reference: text('reference'),
   message: text('message'),
   archiveId: text('archive_id'),
@@ -186,16 +187,30 @@ import's staged rows are deleted. (Staging lives in the local SQLite DB — stil
      `new` row with `before_opening = true` is **not** inserted — committing it
      would place a transaction outside the account's balance window, invisible to
      the balance. The review summary flags these and offers a one-click **"Extend
-     history"** assist (decision 002-E): set `opening_balance_date` to the earliest
-     excluded row's `payment_date` and recompute
-     `opening_balance_cents := old_opening − Σ(excluded amount_cents)`, then
-     re-analyze so the rows fall in-window. This is exact, not an estimate — the
-     excluded rows are the _complete, contiguous_ history between the new and old
-     dates (a bank export has no gaps), so `old_opening = new_opening + Σ(excluded)`
+     history"** assist (decision 002-E) — but **only when the file bridges the
+     gap**: the assist is offered iff
+     `max(payment_date over all rows in the file) ≥ old opening_balance_date`.
+     A gapless export is contiguous only within its own range; if the file's
+     latest row is still earlier than the old opening date (export ends in March,
+     opening date is June), the excluded rows are a _partial_ history and the
+     recompute would silently corrupt the opening balance. In that case the UI
+     falls back to manual date/amount entry with an explanation ("this file ends
+     <date>, before the account's opening date <date> — enter the
+     balance at <date> manually").
+
+     When offered, the assist sets `opening_balance_date` to the earliest excluded
+     row's `payment_date` and recomputes
+     `opening_balance_cents := old_opening − Σ(amount_cents of excluded rows with
+     dup_state = 'new')` — **`new` rows only**, so `duplicate_in_batch` /
+     `duplicate_existing` rows are not double-counted — then re-analyzes so the
+     rows fall in-window. Under the guard this is exact, not an estimate: the
+     file's rows span from the earliest excluded row through at least the old
+     opening date without gaps, so `old_opening = new_opening + Σ(excluded new)`
      by construction; the account balance at every date ≥ the old opening date is
-     unchanged and only the older history becomes visible, with no statement lookup.
-     (A manual date/amount edit stays available.) There is deliberately no "commit
-     anyway" that would leave a row outside the window.
+     unchanged and only the older history becomes visible, with no statement
+     lookup. (A manual date/amount edit stays available even when the assist is
+     offered.) There is deliberately no "commit anyway" that would leave a row
+     outside the window.
    - **Uncategorized allowed (decision 002-C):** a `new` row the user left
      unlabeled commits with `category_id = null` and `category_source = null`. It
      can be labeled later from the transactions list. The commit endpoint requires
@@ -220,8 +235,16 @@ rows the user has not manually decided).
 - `categoryId` + `scope: 'one_off' | 'update_rule'`:
   - `one_off` — set the category, `category_source='manual'`; rules untouched.
   - `update_rule` — set the category **and** upsert the `labeling_rules` entry for
-    this transaction's `normalized_counterparty`. Future imports and unlabeled
-    matches follow the new rule; existing manually-labeled rows are not rewritten.
+    this transaction's `normalized_counterparty`. **Retroactive:** all committed
+    transactions with the same `normalized_counterparty` and
+    `category_source='rule'` are relabeled to the new category in the same
+    operation (fixing a rule fixes what the rule mislabeled). Rows with
+    `category_source='manual'` are **never** rewritten; `'type_hint'` rows are
+    also untouched (their label came from Tapahtumalaji, not this rule).
+    Uncategorized rows (`category_id=null`) are not auto-relabeled — they were
+    never confirmed and still need review. Future imports follow the new rule.
+    The response reports the retroactive count so the UI can say "also relabeled
+    N earlier transactions".
 - `note` — set/clear the free-text transaction note. Independent of category; a
   note-only edit needs no `scope` and never touches rules.
 
@@ -231,7 +254,13 @@ The UI prompts which scope when the new category differs from what a rule would 
 
 - `POST /api/imports` (multipart: `file`, `accountId`) → `{ importId, encoding,
 counts: { total, new, duplicates }, groups: [...] }`.
-- `GET /api/imports/:id` → staged rows + groups + current proposed/chosen labels.
+- `GET /api/imports/:id` → staged rows + groups + current proposed/chosen labels,
+  plus `beforeOpening: { count, earliestDate, sumNewCents, extendOffered }`
+  (`extendOffered` reflects the 002-E guard).
+- `POST /api/imports/:id/extend-history` → applies the 002-E recompute and
+  re-analyzes. The guard is enforced **server-side**: if
+  `max(payment_date in file) < opening_balance_date`, respond 409 — the UI hiding
+  the button is not the protection.
 - `PATCH /api/imports/:id/groups/:normalizedCounterparty` →
   `{ categoryId, rememberRule }` (bulk apply to the group).
 - `PATCH /api/imports/:id/rows/:rowId` → `{ categoryId?, note? }` (single-row
@@ -303,16 +332,35 @@ Assert against `fixtures/expected.json` (CLAUDE.md validation §5):
     row on re-analyze.
 11. The **"Extend history"** assist (002-E) sets `opening_balance_date` to the
     earliest excluded row and `opening_balance_cents = old_opening −
-Σ(excluded amount_cents)`; after re-analyze the previously-excluded rows commit
+    Σ(amount_cents of excluded dup_state='new' rows)` — asserted with a file that
+    contains `duplicate_in_batch` rows in the excluded range, proving duplicates
+    are not double-counted; after re-analyze the previously-excluded rows commit
     in-window **and** the account balance at every date ≥ the old opening date is
     unchanged (cent-for-cent).
-12. Playwright: screenshot of the review screen against seeded data with groups and
+12. **Negative (002-E guard):** importing a **gap fixture** — an export whose
+    latest row is earlier than the account's `opening_balance_date` (add
+    `fixtures/synthetic/gap-*.csv`; e.g. file ends 2025-03, opening date
+    2025-06) — flags its rows `before_opening` but does **not** offer the
+    "Extend history" assist; the API/UI surfaces the manual-entry fallback
+    instead, and the opening balance is unchanged.
+13. `PATCH /api/transactions/:id` with `scope='update_rule'` relabels all
+    committed rows sharing the `normalized_counterparty` that have
+    `category_source='rule'`, leaves `'manual'` and `'type_hint'` rows and
+    uncategorized rows untouched, and reports the retroactive count.
+14. **Counterparty BIC dropped (002-F):** this spec's migration removes
+    `transactions.counterparty_bic` and applies cleanly on a DB that already has
+    the merged-001 schema (and re-applies as a no-op); the adapter never emits a
+    `counterpartyBic` field and `staged_transactions` has no such column. The
+    parsed `counterparty_iban` is still populated for outgoing bank-transfer rows
+    (asserted against `expected.json`) — dropping BIC did not disturb IBAN.
+15. Playwright: screenshot of the review screen against seeded data with groups and
     duplicate count visible.
 
 ## Deferred (needs a new approved spec)
 
 - Additional bank adapters (only the interface exists now).
-- Automatic transfer **pair-matching** across accounts (OMA TILISIIRTO in/out).
+- Automatic transfer **pair-matching** across accounts (OMA TILISIIRTO in/out) —
+  the sole consumer of the retained `counterparty_iban` (decision 002-F).
 - Split transactions during review.
 - Fuzzy/token normalization beyond the deterministic rules above.
 
@@ -345,10 +393,38 @@ revisit whether the constraint should become `(account_id, archive_id)`.
   2026-07-16).** ✅ When an import contains rows dated before the account's
   `opening_balance_date`, the app offers a one-click recompute instead of leaving
   the arithmetic to the user: lower the opening date to the earliest excluded row
-  and set `opening_balance_cents := old_opening − Σ(excluded amount_cents)`. Exact
-  because the export's excluded rows are the complete history bridging the two
-  dates, so recent balances are preserved and only older history appears. Closes
-  the ergonomic gap where "lower the opening date" silently also required knowing
-  the balance at a year-old date.
+  and set `opening_balance_cents := old_opening − Σ(amount_cents of excluded
+  dup_state='new' rows)`. Exact **only when the file bridges the gap**
+  (`max(payment_date in file) ≥ old opening_balance_date`) — then the excluded
+  rows are the complete history between the two dates, recent balances are
+  preserved, and only older history appears. When the file ends before the old
+  opening date, the assist is **not offered** (the sum would be a partial history
+  and would corrupt the opening balance); manual entry with an explanation is the
+  fallback. Closes the ergonomic gap where "lower the opening date" silently also
+  required knowing the balance at a year-old date.
+- **002-F — Drop counterparty BIC; keep counterparty IBAN as source-only (owner,
+  2026-07-17).** ✅ Neither counterparty IBAN nor BIC feeds any current
+  computation: dedup keys on `archive_id` (content-hash fallback deliberately
+  excludes them, decision 001-B), labeling/normalization key on the counterparty
+  **name**, and account routing is manual (decision 002-D). **BIC is dropped
+  entirely** — it identifies the counterparty's bank, not their account, and has
+  no tracking or matching value. **Counterparty IBAN is kept, but reframed as
+  retained source data, not an active field**: its only consumer is the deferred
+  transfer **pair-matching** feature (matching an OMA TILISIIRTO out of one
+  account to the one into another is reliable on IBAN, flaky on amount+date+name),
+  and unlike categories/notes it is **irreproducible** — discard it at import and
+  the only recovery is re-importing the original CSV, so dropping it now would
+  make the owner's ~1 year of bulk-imported history permanently unpairable. The
+  own-account IBAN (`accounts.iban`, spec 001) is unaffected — it is user-entered,
+  cheap, useful for account identification, and the anchor pair-matching would
+  match counterparty IBANs against. **Implementation note:** spec 001 is **merged**
+  and shipped the `counterparty_bic` column (`schema.ts`, migration `0000`), so
+  its migration is **not** amended. Instead this spec removes the field from
+  `schema.ts` and adds a forward **DROP-COLUMN migration** for
+  `transactions.counterparty_bic`, generated by `drizzle-kit` alongside the
+  `staged_transactions` migration (SQLite ≥ 3.35 `ALTER TABLE ... DROP COLUMN`, or
+  Drizzle's table-rebuild if it chooses that path). Safe on a DB with real data:
+  the column carries no dependency (no index, FK, or reader). The staging table
+  never gets a `counterparty_bic` column at all.
 
 No open questions remain for this spec.
