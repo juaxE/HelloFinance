@@ -790,3 +790,74 @@ ESIMERKKI`). Rather than guessing from the free-text template name (fragile), th
   the one that gets implemented correctly.
 
 No open questions remain for this spec.
+
+## Implementation notes
+
+Choices made where the spec was silent, recorded rather than decided silently.
+None of these contradicts an explicit rule; where a silence looked genuinely
+behavioral, the note says what forced the reading.
+
+1. **Unbudgeted is keyed on the absence of an _envelope_, not of any line.**
+   Step 3 says "remaining M rows in categories that have no line". Taken
+   literally, a category holding only a **named** line (say a Spotify line in
+   Subscriptions) would have "a line", so its *other* remaining spend (a Netflix
+   charge) would fall into no bucket at all. That breaks the partition and
+   therefore criterion 10, which the same paragraph exists to guarantee. The
+   per-category decomposition settles it: `actualCents(C)` is defined as named
+   actuals **+ the envelope remainder**, so a category with no envelope does not
+   absorb its remainder. Implemented as: remaining rows in a category with **no
+   envelope** are unbudgeted. Consequence worth knowing: a category can appear
+   under "Unbudgeted" while still showing a named line under Bills.
+
+2. **Templates cannot target `Transfer` or an income-source category** (`400`).
+   The spec states this for `PUT …/envelopes` (criterion 23) but not for
+   templates. Allowing it would materialize a line into a category excluded from
+   M, which could never reconcile and would sit permanently pending. The
+   Deferred section's "templates and envelopes are expenses only" makes this the
+   intended reading; the same check guards `POST/PATCH …/lines`.
+
+3. **003-N's uniqueness check is symmetric.** The rule is "unique across
+   non-ended templates", so a template that is *itself* already ended (an
+   `end_month` in the past) is outside the set and is neither blocked by, nor
+   blocks, an existing key. Only the "does not block" half is spelled out
+   (criterion 25); the other half follows from reading the rule as a property of
+   a set rather than a test applied to newcomers.
+
+4. **"Any month the user explicitly opens" (003-C) is `?open=1`.** `GET
+   /api/budgets/:month` materializes the current month unconditionally and any
+   other month only with that flag. The month picker navigates without it, so
+   browsing history leaves no trail of materialized months; "Materialize month"
+   and the goal-editing flow pass it.
+
+5. **The review-Q1 targeted insert is `POST
+   /api/budgets/:month/lines/from-template/:templateId`.** The spec describes
+   the behavior and the `addableToMonths` hint but names no route. It shares its
+   validation function with `POST …/lines` rather than duplicating it, which is
+   what makes "no privileged path writes lines around the invariants" true by
+   construction instead of by discipline.
+
+6. **`buildApp` takes an injectable `now`.** Several rules key off "the current
+   month" (auto-materialization, the non-ended set, the hint). The synthetic
+   fixtures end 2026-06, so tests pin the clock; production passes the real one.
+
+7. **Envelope lines get the category's name.** `budget_lines.name` is `NOT
+   NULL`, and an envelope has no natural name of its own, so it is created with
+   its category's name. `POST …/lines` accepts an optional override.
+
+8. **Seed data now includes five recurring templates** (monthly / quarterly /
+   yearly, matched to counterparties the fixtures actually charge) so the
+   Budgets screen has a real bill plan for manual QA and the criterion-27
+   screenshots. **No envelopes are seeded** — decision 003-K means an envelope
+   may exist only because the owner set one, or the "did I budget this month?"
+   signal would be a lie.
+
+### Follow-ups (not built here)
+
+- Reconciliation normalizes each transaction's counterparty at query time,
+  because `transactions` stores only the raw `counterparty` while
+  `staged_transactions` stores the normalized form. Fine at this data size, but
+  a stored `normalized_counterparty` column on `transactions` (with an index)
+  is the better shape, and would let named-line matching become a real join.
+  Needs a migration, so it belongs to its own change.
+- The month view has no month-level `note` editor yet; the `PATCH
+  /api/budgets/:month` endpoint that backs it exists and is tested.

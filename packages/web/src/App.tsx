@@ -1,13 +1,15 @@
 import { useState } from 'react';
+import { BudgetsPage } from './components/BudgetsPage';
 import { ImportPage } from './components/ImportPage';
 import { RulesPage } from './components/RulesPage';
 import { TransactionsPage } from './components/TransactionsPage';
 
-type View = 'import' | 'transactions' | 'rules';
+type View = 'import' | 'transactions' | 'budgets' | 'rules';
 
 const VIEWS: Array<{ id: View; label: string }> = [
   { id: 'import', label: 'Import' },
   { id: 'transactions', label: 'Transactions' },
+  { id: 'budgets', label: 'Budgets' },
   { id: 'rules', label: 'Rules' },
 ];
 
@@ -40,6 +42,7 @@ export function App() {
       <main>
         {view === 'import' && <ImportPage />}
         {view === 'transactions' && <TransactionsPage />}
+        {view === 'budgets' && <BudgetsPage />}
         {view === 'rules' && <RulesPage />}
       </main>
     </div>
