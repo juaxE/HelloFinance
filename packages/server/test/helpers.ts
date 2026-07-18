@@ -41,6 +41,7 @@ export const EXPECTED = JSON.parse(
   };
   needsReview: {
     month: string;
+    archiveId: string;
     counterparty: string;
     normalizedCounterparty: string;
     amountCents: number;

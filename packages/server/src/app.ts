@@ -49,7 +49,7 @@ export function buildApp(db: Db, options: AppOptions = {}): FastifyInstance {
   registerLabelingRuleRoutes(app, db);
   registerTransactionRoutes(app, db);
   registerRecurringTemplateRoutes(app, db, currentMonth);
-  registerBudgetRoutes(app, db);
+  registerBudgetRoutes(app, db, currentMonth);
 
   return app;
 }
