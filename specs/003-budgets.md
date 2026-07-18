@@ -137,6 +137,46 @@ Actuals are **never stored** — always computed from `transactions` by
   offers to insert its snapshot line into that month (a targeted insert, not a
   re-materialization). Already-closed past months are left as the historical
   record. Silently skipping the current month would read as a bug (review Q1).
+  **The targeted insert is an ordinary line insert** and runs the **same
+  validation as `POST …/lines`** — in particular the one-line-per-match-key check.
+  If the target month already holds a line with that key (typically an ad-hoc one
+  the owner added by hand before setting up the template), the insert is rejected
+  `409` and the UI steers to reconciling the two by hand: delete the ad-hoc line,
+  then insert, or leave the month as it is. There is no privileged path that writes
+  lines around the invariants (decision 003-N).
+
+### Match keys are unique across templates (decision 003-N)
+
+`match_normalized_counterparty` must be **unique across all non-ended templates** —
+i.e. every template whose `end_month` is null or `≥` the current month. `POST` and
+`PATCH /api/recurring-templates` reject a collision with `409`, naming the existing
+template and steering to editing it instead.
+
+Without this, two templates keyed to the same counterparty — plausible: Helen
+billing electricity and district heating as separate templates, both normalizing to
+`HELEN OY` — would materialize **two same-key lines into every month**, violating
+the one-line-per-match-key invariant that `POST`/`PATCH …/lines` defends with a
+`409`, through a path that never checks it. The failure is worse than a wrong
+number: with no defined collision behavior, an implementer resolves it silently as
+a crash, a skip, or a duplicate, and each choice is defensible from the spec as
+written. Note this became possible only with **003-L**: while keyless templates were
+legal, a template could avoid a key collision by having no key.
+
+With template keys unique and materialization inserting one line per due template,
+**materialization cannot produce a same-key collision by construction** — so it
+needs no collision handling of its own. That is the point of enforcing uniqueness
+one level up, at the template, rather than teaching every insert path to resolve
+duplicates.
+
+The rule is deliberately **slightly stronger than strictly necessary**: two
+same-key templates with disjoint due-month phases (say, alternating quarters) could
+in principle coexist without ever colliding in a single month. That configuration
+is one the owner would regret — two plans for one counterparty, reconciling against
+the same transactions in whichever month each lands — and the phase-aware version
+of the rule is materially harder to state, implement, and predict. The simple rule
+is the one that gets implemented correctly. Two genuinely different bills from one
+counterparty are expressed as **one template plus a category envelope**, or by
+keying them apart if the counterparty text actually differs.
 
 ### Reconciliation (planned vs. actual, per month)
 
@@ -333,11 +373,13 @@ expectedDayOfMonth?, note? }` — match key is **required** (`400` without it, w
   `end_month` instead ("end, don't delete" — decision 003-H). Fields: `name`, `categoryId`,
   `amountCents` (per occurrence), `intervalMonths`, `expectedDayOfMonth`,
   `startMonth`, `endMonth?`, `matchNormalizedCounterparty` (**required** — `400`
-  without it, with a message pointing at envelopes for goals; decision 003-L),
-  `note?`. When a
-  create/edit makes the template due in the current (already-materialized) month,
-  the response carries an `addableToMonths: ['YYYY-MM']` hint the UI acts on to
-  insert the line now (review Q1).
+  without it, with a message pointing at envelopes for goals; decision 003-L), and
+  **unique across non-ended templates** — `409` naming the existing template
+  (decision 003-N) — plus `note?`. When a create/edit makes the template due in the
+  current (already-materialized) month, the response carries an
+  `addableToMonths: ['YYYY-MM']` hint the UI acts on to insert the line now (review
+  Q1); acting on that hint is an ordinary line insert and can itself return `409`
+  if the month already holds a line with that key.
 
 ## UI sketch
 
@@ -348,7 +390,10 @@ expectedDayOfMonth?, note? }` — match key is **required** (`400` without it, w
   only"; when an edit makes the template due in the current month, it offers to add
   the line now (review Q1). The primary retirement action is **End** (set
   `end_month`); **Delete** is offered only for a template with no materialized
-  lines, and a rejected delete explains why and offers to end it instead.
+  lines, and a rejected delete explains why and offers to end it instead. The
+  counterparty picker (003-D) flags a key already used by another non-ended
+  template and links to it rather than letting the save fail with a bare `409`
+  (decision 003-N).
 - **Budget-making screen** (opening/materializing a month): one row per
   envelope-relevant category — category name, any **recurring lines already
   materialized** into it (name + amount, read-only here), a **goal input**, and the
@@ -422,7 +467,11 @@ subscriptions):
     asserted — the tie-out holds in each, but only (a) leaves the totals alone:
     - **(a) Labeled into an expense category.** The row moves out of needs-review
       into that category's envelope, named line, or unbudgeted. It stays in **M**,
-      so the month's expense total is **unchanged** on both sides.
+      so the month's expense total is **unchanged** on both sides — **and the
+      receiving category's actual nets the positive amount down**: label a +12 €
+      payback into Restaurants and that category's actual must equal its charges
+      **minus 12 €**. Assert the per-category figure, not only the month totals; a
+      totals-only check passes without ever proving the netting.
     - **(b) Labeled into `Transfer` or an income-source category.** The row leaves
       **M** entirely — and leaves spec 004's expense bucket by the same rule — so
       the month's expense total **changes**, identically on both sides. This is
@@ -501,7 +550,20 @@ subscriptions):
 24. **Bulk save is a partial upsert.** `PUT …/envelopes` creates/updates the listed
     categories, deletes one sent with `amountCents: null`, and leaves an envelope
     for a category **omitted** from the payload untouched.
-25. Playwright screenshot of (a) the budget-making screen with prefilled
+25. **Template match keys are unique** (decision 003-N). `POST` of a second
+    non-ended template with a match key an existing non-ended template already
+    uses returns `409` naming the existing template, and creates nothing; the same
+    `PATCH` onto an existing template is likewise `409`. A template whose
+    `end_month` is in the past does **not** block reusing its key. Consequently,
+    materializing any month produces **at most one line per match key** — asserted
+    directly over a month materialized from the full seeded template set, not
+    inferred from the `409`.
+26. **Targeted insert respects the invariant** (decision 003-N, review Q1).
+    Creating a template whose key matches an ad-hoc line already present in the
+    current materialized month surfaces the `addableToMonths` hint, but acting on
+    it returns `409` and inserts nothing; deleting the ad-hoc line first makes the
+    same insert succeed.
+27. Playwright screenshot of (a) the budget-making screen with prefilled
     suggestions visually distinct from confirmed amounts and at least one
     deliberately empty category, and (b) the month view with reconciled numbers
     visible (including the "Needs review" bucket).
@@ -526,9 +588,11 @@ counterparty }` block alongside `recurringNegativeCases` when implementing.
 > total; the incoming `VIPPS MOBILEPAY AS` paybacks already in
 > `main-2025-07_2026-06.csv` are the natural subject.
 >
-> **Envelope criteria (18–24) need no new fixtures.** Envelopes are user-created,
-> not seeded — those tests build their own envelopes over the existing seeded
-> transactions. Criterion 22 reuses any seeded counterparty for its ad-hoc line.
+> **Envelope and uniqueness criteria (18–26) need no new fixtures.** Envelopes and
+> templates are user-created, not seeded — those tests build their own lines and
+> templates over the existing seeded transactions. Criterion 22 reuses any seeded
+> counterparty for its ad-hoc line; criteria 25–26 need only two templates keyed to
+> the same counterparty, which the test constructs.
 
 ## Deferred (needs a new approved spec)
 
@@ -538,6 +602,10 @@ counterparty }` block alongside `recurringNegativeCases` when implementing.
   a single month's goal; an unspent envelope does **not** increase next month's.
 - **Sinking funds** (accruing a monthly reserve toward a future non-monthly bill —
   003-E option b). Distinct from envelopes; see the naming note under 003-E.
+- **Transaction-level reimbursement linking** (netting a repayment against a
+  specific expense row, rather than against its category as a whole — see the
+  netting rule in reconciliation). Belongs with **split transactions**: both need a
+  transaction→lines table, and they should be specced together.
 - Multi-month or annual budget views.
 - Auto-suggesting templates from detected recurring transactions.
 
@@ -706,5 +774,19 @@ ESIMERKKI`). Rather than guessing from the free-text template name (fragile), th
   reporting mutated by planning configuration. The divergence is documented on both
   sides (here, and as a note for the 004 revision) so it is never mistaken for a
   CLAUDE.md §6 tie-out violation.
+
+- **003-N — Match keys are unique across non-ended templates.** ✅ `409` on template
+  `POST`/`PATCH` collision; the review-Q1 targeted insert runs the same validation
+  as any line insert and can also `409`. Full rationale in **Match keys are unique
+  across templates** above. _Short version:_ 003-L made template-key collisions
+  possible (keyless templates were previously the escape hatch) while nothing
+  policed them, and materialization inserts lines through a path that never checked
+  the one-line-per-match-key invariant — so two templates on `HELEN OY` would have
+  produced two same-key lines every month, or a crash, or a silent skip, depending
+  on the implementer. Enforcing uniqueness at the template makes the collision
+  unreachable by construction instead of teaching each insert path to resolve it.
+  Accepted as slightly over-strict (disjoint-phase same-key templates are also
+  refused) because that configuration is undesirable anyway and the simple rule is
+  the one that gets implemented correctly.
 
 No open questions remain for this spec.
