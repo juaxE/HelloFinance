@@ -331,7 +331,12 @@ export const budgetLines = sqliteTable(
       .references(() => budgets.id),
     // Provenance only; the line carries its own snapshot values below.
     templateId: integer('template_id').references(() => recurringTemplates.id),
-    kind: text('kind', { enum: ['recurring', 'adhoc'] }).notNull(),
+    // Provenance, NOT reconciliation behavior (decision 003-G): behavior follows
+    // the match key. 'envelope' is a per-month category goal (decision 003-I) and
+    // is never materialized from anything. `kind` is unconstrained `text` in
+    // migration 0000, so adding the value is a TypeScript change with no SQL
+    // migration.
+    kind: text('kind', { enum: ['recurring', 'adhoc', 'envelope'] }).notNull(),
     name: text('name').notNull(),
     categoryId: integer('category_id')
       .notNull()

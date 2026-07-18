@@ -25,7 +25,7 @@ import { eq } from 'drizzle-orm';
 import { DATABASE_PATH } from '../config';
 import { createDb } from '../db/client';
 import { runMigrations } from '../db/migrate';
-import { accounts, categories, labelingRules } from '../db/schema';
+import { accounts, categories, labelingRules, recurringTemplates } from '../db/schema';
 import { analyzeImport, commitImport } from '../import/pipeline';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -85,6 +85,8 @@ function main(): void {
   seedRule(db, 'K-MARKET', 'Groceries', 'K-Market Kamppi 4021');
   seedRule(db, 'NETFLIX.COM', 'Subscriptions', 'NETFLIX.COM');
 
+  seedTemplates(db);
+
   const overlapBytes = loadFixture(expected.files.overlap!.path);
   const overlapImport = analyzeImport(db, {
     accountId: mainAccount.id,
@@ -98,9 +100,44 @@ function main(): void {
       `  Main account #${mainAccount.id}: ${mainCommit.inserted} committed (${mainCommit.uncategorized} uncategorized)`,
       `  Buffer account #${bufferAccount.id}: ${bufferCommit.inserted} committed (${bufferCommit.uncategorized} uncategorized)`,
       `  2 labeling rules seeded (K-MARKET -> Groceries, NETFLIX.COM -> Subscriptions)`,
+      `  5 recurring templates seeded (monthly/quarterly/yearly bills; no envelopes — those are the owner's to set)`,
       `  Pending review import #${overlapImport.importId} on Main (overlap file: 28 duplicates, 14 new groups expected)`,
     ].join('\n'),
   );
+}
+
+/**
+ * Recurring templates matched to counterparties the fixtures actually charge,
+ * across all three cadences, so the Budgets screen has a real bill plan to
+ * reconcile (spec 003). Envelopes are deliberately NOT seeded: an envelope must
+ * exist only because the owner set it, or the "did I budget this month?" signal
+ * would be a lie (decision 003-K).
+ */
+function seedTemplates(db: ReturnType<typeof createDb>): void {
+  const templates = [
+    // name, category, cents/occurrence, interval, day, start, match key
+    ['Rent', 'Housing', 118000, 1, 5, '2025-07', 'ASUNTO OY HELSINGIN ESIMERKKI'],
+    ['Gym', 'Health', 4990, 1, 3, '2025-07', 'ELIXIA HELSINKI'],
+    ['Netflix', 'Subscriptions', 1799, 1, 12, '2025-07', 'NETFLIX.COM'],
+    ['Self storage', 'Other', 8700, 3, 20, '2025-07', 'PELICAN SELF STORAGE'],
+    ['Home insurance', 'Other', 60000, 12, 15, '2025-10', 'LÄHITAPIOLA'],
+  ] as const;
+
+  for (const [name, categoryName, amountCents, intervalMonths, day, startMonth, key] of templates) {
+    const category = db.select().from(categories).where(eq(categories.name, categoryName)).get();
+    if (!category) throw new Error(`category "${categoryName}" not found`);
+    db.insert(recurringTemplates)
+      .values({
+        name,
+        categoryId: category.id,
+        amountCents,
+        intervalMonths,
+        expectedDayOfMonth: day,
+        startMonth,
+        matchNormalizedCounterparty: key,
+      })
+      .run();
+  }
 }
 
 function seedRule(db: ReturnType<typeof createDb>, normalized: string, categoryName: string, exampleRaw: string): void {

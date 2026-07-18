@@ -258,6 +258,15 @@
       "actualMonth": "2026-03"
     }
   },
+  "needsReview": {
+    "month": "2026-04",
+    "archiveId": "20260408390000000304",
+    "counterparty": "VIPPS MOBILEPAY AS,",
+    "normalizedCounterparty": "VIPPS MOBILEPAY AS,",
+    "amountCents": 1012,
+    "monthExpenseCentsWithRow": 129330,
+    "monthExpenseCentsWithoutRow": 130342
+  },
   "normalizationExamples": [
     {
       "raw": "PAYPAL *SPOTIFY*P41B7F3E9",
