@@ -64,7 +64,7 @@ export function registerBudgetRoutes(app: FastifyInstance, db: Db, currentMonth:
       categories: reconciliation.categories,
       unbudgeted: reconciliation.unbudgeted,
       needsReview: reconciliation.needsReview,
-      envelopeCandidates: envelopeCandidates(db, budget.id, month, reconciliation),
+      envelopeCandidates: envelopeCandidates(db, budget.id, month),
       totals: reconciliation.totals,
       // The "did I budget this month?" signal decision 003-K exists to protect.
       budgeted: reconciliation.lines.some((l) => l.kind === 'envelope'),
@@ -451,20 +451,18 @@ function categoryName(db: Db, categoryId: number): string {
  * nothing here creates an envelope, because auto-created envelopes would make
  * every month look budgeted and destroy the "did I budget this month?" signal.
  *
- * `plannedSubtotalCents` is `plannedCents(C)` — envelope + named lines in the
- * category — so double-planning (an ad-hoc car-service line *and* a raised
- * Transport envelope) is visible at a glance rather than found at month end.
+ * The screen's per-category planned subtotal is NOT returned here: it has to
+ * update live as the owner types a goal, so it is computed on the client from
+ * the month's lines. `categories` carries the committed decomposition.
  */
 function envelopeCandidates(
   db: Db,
   budgetId: number,
   month: string,
-  reconciliation: ReturnType<typeof reconcileMonth>,
 ): {
   categoryId: number;
   envelopeAmountCents: number | null;
   suggestedAmountCents: number | null;
-  plannedSubtotalCents: number;
 }[] {
   const previous = db.select().from(budgets).where(eq(budgets.month, previousMonth(month))).get();
   const previousEnvelopes = previous
@@ -483,7 +481,6 @@ function envelopeCandidates(
   const envelopes = new Map(
     lines.filter((l) => l.kind === 'envelope').map((l) => [l.categoryId, l.amountCents]),
   );
-  const planned = new Map(reconciliation.categories.map((c) => [c.categoryId, c.plannedCents]));
 
   return envelopeRelevantCategories(db)
     // Archived categories are omitted unless they already have a line in this
@@ -493,6 +490,5 @@ function envelopeCandidates(
       categoryId: c.id,
       envelopeAmountCents: envelopes.get(c.id) ?? null,
       suggestedAmountCents: previousEnvelopes.get(c.id) ?? null,
-      plannedSubtotalCents: planned.get(c.id) ?? 0,
     }));
 }

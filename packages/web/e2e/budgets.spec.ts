@@ -79,6 +79,15 @@ test('budget-making screen renders suggestions distinctly from confirmed amounts
   await expect(goalInput(page, 'Transport')).toHaveAttribute('data-suggestion', 'true');
   await expect(goalInput(page, 'Health')).toHaveValue('');
 
+  // Criterion 22 (UI half): the per-category planned subtotal is envelope +
+  // named lines in that category, so double-planning is visible at a glance.
+  // Housing carries the seeded 1 180,00 EUR Rent bill and no goal yet.
+  const housingRow = page.getByTestId('goal-row').filter({ hasText: 'Housing' });
+  await expect(housingRow.getByTestId('planned-subtotal')).toHaveText('1 180,00 €');
+  await goalInput(page, 'Housing').fill('200.00');
+  // ...and typing a goal adds to the bill rather than replacing it.
+  await expect(housingRow.getByTestId('planned-subtotal')).toHaveText('1 380,00 €');
+
   await page.screenshot({ path: 'test-results/budget-making-screen.png', fullPage: true });
 });
 

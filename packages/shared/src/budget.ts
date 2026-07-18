@@ -251,7 +251,6 @@ export const zEnvelopeCandidate = z.object({
   categoryId: z.number().int(),
   envelopeAmountCents: z.number().int().nullable(),
   suggestedAmountCents: z.number().int().nullable(),
-  plannedSubtotalCents: z.number().int(),
 });
 export type EnvelopeCandidate = z.infer<typeof zEnvelopeCandidate>;
 
