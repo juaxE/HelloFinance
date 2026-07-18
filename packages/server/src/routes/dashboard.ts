@@ -11,6 +11,7 @@ import {
   recurringCommitments,
   trendMonths,
 } from '../dashboard/aggregates';
+import { netWorthTrend } from '../dashboard/net-worth';
 
 /**
  * Dashboard read endpoints (spec 004). Every one of them is a pure read: the
@@ -22,6 +23,19 @@ export function registerDashboardRoutes(
   db: Db,
   currentMonth: () => string,
 ): void {
+  /**
+   * The net-worth trend. Ignores `archived_at` entirely (decision 004-F): an
+   * archived asset's snapshots keep carrying forward, because history must not
+   * change because of an action taken today.
+   */
+  app.get('/api/dashboard/net-worth', async (req, reply) => {
+    const parsed = zTrendQuery.safeParse(req.query);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'validation', details: parsed.error.flatten() });
+    }
+    return netWorthTrend(db, trendMonths(db, parsed.data, currentMonth()));
+  });
+
   app.get('/api/dashboard/cash-flow', async (req, reply) => {
     const parsed = zTrendQuery.safeParse(req.query);
     if (!parsed.success) {

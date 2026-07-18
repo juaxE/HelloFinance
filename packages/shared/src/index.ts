@@ -17,5 +17,6 @@ export * from './transaction';
 export * from './labeling-rule';
 export * from './import';
 export * from './budget';
+export * from './asset';
 export * from './dashboard';
 export * from './money';

@@ -3,6 +3,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import type { Db } from './db/client';
 import { monthOf } from './budgets/months';
 import { registerAccountRoutes } from './routes/accounts';
+import { registerAssetRoutes } from './routes/assets';
 import { registerBudgetRoutes } from './routes/budgets';
 import { registerCategoryRoutes } from './routes/categories';
 import { registerDashboardRoutes } from './routes/dashboard';
@@ -46,6 +47,7 @@ export function buildApp(db: Db, options: AppOptions = {}): FastifyInstance {
   });
 
   registerAccountRoutes(app, db);
+  registerAssetRoutes(app, db);
   registerCategoryRoutes(app, db);
   registerImportRoutes(app, db);
   registerLabelingRuleRoutes(app, db);
