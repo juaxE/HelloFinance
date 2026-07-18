@@ -1,6 +1,6 @@
 # Spec 004 — Dashboard (overview)
 
-Status: draft, awaiting owner approval
+Status: **approved** (owner, 2026-07-18) — ready to implement.
 Depends on: 001 (schema), 002 (transactions), 003 (budget reconciliation).
 Depended on by: nothing.
 
