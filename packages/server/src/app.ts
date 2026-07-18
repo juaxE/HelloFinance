@@ -1,22 +1,36 @@
 import multipart from '@fastify/multipart';
 import Fastify, { type FastifyInstance } from 'fastify';
 import type { Db } from './db/client';
+import { monthOf } from './budgets/months';
 import { registerAccountRoutes } from './routes/accounts';
+import { registerBudgetRoutes } from './routes/budgets';
 import { registerCategoryRoutes } from './routes/categories';
 import { registerImportRoutes } from './routes/imports';
 import { registerLabelingRuleRoutes } from './routes/labeling-rules';
+import { registerRecurringTemplateRoutes } from './routes/recurring-templates';
 import { registerTransactionRoutes } from './routes/transactions';
+
+/**
+ * `now` is injectable so budget tests can pin the current month: the synthetic
+ * fixtures run 2025-07..2026-06, and rules keyed to "the current month"
+ * (auto-materialization, the 003-N non-ended set, the review-Q1 hint) would
+ * otherwise depend on the wall clock and rot.
+ */
+export type AppOptions = { now?: () => Date };
 
 /**
  * Build the Fastify application over an already-migrated database. Feature
  * routes are registered here per the approved specs under `specs/`; spec 001
  * adds the accounts and categories reference resources, spec 002 adds CSV
- * import/review, labeling rules, and transactions.
+ * import/review, labeling rules, and transactions. Spec 003 adds recurring
+ * templates and budget months.
  *
  * There is deliberately no auth layer: the server binds to loopback only and
  * localhost auth would be theater (CLAUDE.md non-negotiable #2).
  */
-export function buildApp(db: Db): FastifyInstance {
+export function buildApp(db: Db, options: AppOptions = {}): FastifyInstance {
+  const currentMonth = (): string => monthOf(options.now ? options.now() : new Date());
+
   const app = Fastify({
     logger: true,
   });
@@ -34,6 +48,8 @@ export function buildApp(db: Db): FastifyInstance {
   registerImportRoutes(app, db);
   registerLabelingRuleRoutes(app, db);
   registerTransactionRoutes(app, db);
+  registerRecurringTemplateRoutes(app, db, currentMonth);
+  registerBudgetRoutes(app, db);
 
   return app;
 }

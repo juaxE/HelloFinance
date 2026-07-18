@@ -1,10 +1,26 @@
-import type { Account, Category, LabelingRule, Transaction } from '@finance/shared';
-import type { accounts, categories, labelingRules, transactions } from '../db/schema';
+import type {
+  Account,
+  BudgetLine,
+  Category,
+  LabelingRule,
+  RecurringTemplate,
+  Transaction,
+} from '@finance/shared';
+import type {
+  accounts,
+  budgetLines,
+  categories,
+  labelingRules,
+  recurringTemplates,
+  transactions,
+} from '../db/schema';
 
 type AccountRow = typeof accounts.$inferSelect;
 type CategoryRow = typeof categories.$inferSelect;
 type TransactionRow = typeof transactions.$inferSelect;
 type LabelingRuleRow = typeof labelingRules.$inferSelect;
+type RecurringTemplateRow = typeof recurringTemplates.$inferSelect;
+type BudgetLineRow = typeof budgetLines.$inferSelect;
 
 /** DB row -> API shape: timestamps become epoch-ms integers. */
 export function serializeAccount(row: AccountRow): Account {
@@ -62,6 +78,40 @@ export function serializeLabelingRule(row: LabelingRuleRow): LabelingRule {
     normalizedCounterparty: row.normalizedCounterparty,
     categoryId: row.categoryId,
     exampleRaw: row.exampleRaw,
+    createdAt: row.createdAt.getTime(),
+    updatedAt: row.updatedAt.getTime(),
+  };
+}
+
+export function serializeRecurringTemplate(row: RecurringTemplateRow): RecurringTemplate {
+  return {
+    id: row.id,
+    name: row.name,
+    categoryId: row.categoryId,
+    amountCents: row.amountCents,
+    intervalMonths: row.intervalMonths,
+    expectedDayOfMonth: row.expectedDayOfMonth,
+    startMonth: row.startMonth,
+    endMonth: row.endMonth,
+    matchNormalizedCounterparty: row.matchNormalizedCounterparty,
+    note: row.note,
+    createdAt: row.createdAt.getTime(),
+    updatedAt: row.updatedAt.getTime(),
+  };
+}
+
+export function serializeBudgetLine(row: BudgetLineRow): BudgetLine {
+  return {
+    id: row.id,
+    budgetId: row.budgetId,
+    templateId: row.templateId,
+    kind: row.kind,
+    name: row.name,
+    categoryId: row.categoryId,
+    amountCents: row.amountCents,
+    expectedDayOfMonth: row.expectedDayOfMonth,
+    matchNormalizedCounterparty: row.matchNormalizedCounterparty,
+    note: row.note,
     createdAt: row.createdAt.getTime(),
     updatedAt: row.updatedAt.getTime(),
   };
