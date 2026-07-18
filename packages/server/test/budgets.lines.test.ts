@@ -541,6 +541,56 @@ describe('spec 003 — targeted insert respects the invariant (criterion 26)', (
   });
 });
 
+describe('spec 003 — line routes are scoped to the month that addresses them', () => {
+  /**
+   * Resolving a line by `id` alone let a request against one month mutate
+   * another month's lines. Already-materialized months are a historical record
+   * and line deletion is durable by design, so a cross-month write is
+   * unrecoverable — the wrong month must not find the line at all.
+   */
+  async function envelopeIn(month: string, category: string): Promise<number> {
+    await openMonth(month);
+    const res = await postLine(month, {
+      kind: 'envelope',
+      categoryId: await categoryId(category),
+      amountCents: 40000,
+    });
+    expect(res.statusCode).toBe(201);
+    return res.json().id;
+  }
+
+  it('DELETE addressed to the wrong month is 404 and leaves the line intact', async () => {
+    const id = await envelopeIn('2026-05', 'Groceries');
+    await openMonth(MONTH);
+
+    const res = await app.inject({ method: 'DELETE', url: `/api/budgets/${MONTH}/lines/${id}` });
+
+    expect(res.statusCode).toBe(404);
+    expect(linesOf('2026-05').map((l) => l.id)).toContain(id);
+  });
+
+  it('PATCH addressed to the wrong month is 404 and leaves the line unchanged', async () => {
+    const id = await envelopeIn('2026-05', 'Groceries');
+    await openMonth(MONTH);
+
+    const res = await patchLine(MONTH, id, { amountCents: 999 });
+
+    expect(res.statusCode).toBe(404);
+    expect(linesOf('2026-05').find((l) => l.id === id)!.amountCents).toBe(40000);
+  });
+
+  it('the same calls addressed to the line’s own month succeed', async () => {
+    const id = await envelopeIn('2026-05', 'Groceries');
+
+    expect((await patchLine('2026-05', id, { amountCents: 12345 })).statusCode).toBe(200);
+    expect(linesOf('2026-05').find((l) => l.id === id)!.amountCents).toBe(12345);
+
+    const del = await app.inject({ method: 'DELETE', url: `/api/budgets/2026-05/lines/${id}` });
+    expect(del.statusCode).toBe(204);
+    expect(linesOf('2026-05').map((l) => l.id)).not.toContain(id);
+  });
+});
+
 describe('spec 003 — month creation on GET (decision 003-C)', () => {
   it('an absent non-current month that is only glanced at returns an uncreated marker and is not materialized', async () => {
     const res = await app.inject({ method: 'GET', url: '/api/budgets/2025-08' });

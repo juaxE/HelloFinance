@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { BudgetMonth, Category } from '@finance/shared';
 import { api } from '../api';
-import { formatCents } from '../format';
+import { formatCents, parseEurosToCents } from '../format';
 
 /**
  * The budget-making screen (spec 003): one row per envelope-relevant category
@@ -25,11 +25,22 @@ import { formatCents } from '../format';
  */
 
 type Draft = {
-  /** What the user has committed to for this category: a value, or "no envelope". */
-  value: number | null;
+  /**
+   * Exactly what the user has typed, kept as text rather than re-derived from
+   * the parsed cents. Reformatting on every keystroke makes the field
+   * untypeable: with `value={(cents/100).toFixed(2)}`, typing "4" renders
+   * "4.00" and the next character lands after the decimals, so no one can
+   * reach 40,00 € by typing. Empty text is "no envelope".
+   */
+  text: string;
   /** True while the shown number is still only a suggestion. */
   isSuggestion: boolean;
 };
+
+/** A draft's committed cents, or `'invalid'` if the text is not a money value. */
+function draftCents(draft: Draft): number | null | 'invalid' {
+  return parseEurosToCents(draft.text);
+}
 
 export function BudgetMakingScreen({
   month,
@@ -55,33 +66,41 @@ export function BudgetMakingScreen({
   function confirmSuggestion(categoryId: number, suggested: number) {
     // Promotes suggestion -> confirmed in the input's state only. Still nothing
     // in the database until Save.
-    update(categoryId, { value: suggested, isSuggestion: false });
+    update(categoryId, { text: centsToInput(suggested), isSuggestion: false });
   }
 
   function typeAmount(categoryId: number, raw: string) {
-    const trimmed = raw.trim();
-    // An empty input is "no envelope"; a typed 0 is a deliberate goal of zero.
-    // The two must stay distinguishable (spec: "envelope 0 != no envelope").
-    if (trimmed === '') {
-      update(categoryId, { value: null, isSuggestion: false });
-      return;
-    }
-    const euros = Number(trimmed.replace(',', '.'));
-    if (!Number.isFinite(euros)) return;
-    update(categoryId, { value: Math.round(euros * 100), isSuggestion: false });
+    // The text is stored verbatim — an empty input is "no envelope", a typed 0
+    // is a deliberate goal of zero, and the two must stay distinguishable
+    // (spec: "envelope 0 != no envelope"). Parsing happens at save.
+    update(categoryId, { text: raw, isSuggestion: false });
   }
 
   async function save() {
     setError(null);
+
+    const touched = [...drafts.entries()].filter(([, draft]) => !draft.isSuggestion);
+
+    const invalid = touched.filter(([, draft]) => draftCents(draft) === 'invalid');
+    if (invalid.length > 0) {
+      setError(
+        `Not a valid amount for ${invalid.map(([id]) => categoryName(id)).join(', ')} — ` +
+          `use digits, e.g. 400 or 400,50.`,
+      );
+      return;
+    }
+
     setSaving(true);
     try {
       // Only categories the user actually touched are sent. An untouched
       // suggestion is NOT a value, so it is omitted rather than saved — and the
       // endpoint leaves omitted categories alone.
-      const envelopes = [...drafts.entries()]
-        .filter(([, draft]) => !draft.isSuggestion)
-        .filter(([categoryId, draft]) => draft.value !== originalValue(month, categoryId))
-        .map(([categoryId, draft]) => ({ categoryId, amountCents: draft.value }));
+      const envelopes = touched
+        .map(([categoryId, draft]) => ({
+          categoryId,
+          amountCents: draftCents(draft) as number | null,
+        }))
+        .filter(({ categoryId, amountCents }) => amountCents !== originalValue(month, categoryId));
       await api.saveEnvelopes(month.month, envelopes);
       onSaved();
     } catch (e) {
@@ -119,11 +138,13 @@ export function BudgetMakingScreen({
             const named = month.lines.filter(
               (l) => l.categoryId === candidate.categoryId && l.matchNormalizedCounterparty,
             );
-            const shown =
+            const parsed = draftCents(draft);
+            const shownText =
               draft.isSuggestion && candidate.suggestedAmountCents !== null
-                ? candidate.suggestedAmountCents
-                : draft.value;
-            const plannedSubtotal = (draft.value ?? 0) + named.reduce((s, l) => s + l.amountCents, 0);
+                ? centsToInput(candidate.suggestedAmountCents)
+                : draft.text;
+            const committed = typeof parsed === 'number' ? parsed : 0;
+            const plannedSubtotal = committed + named.reduce((s, l) => s + l.amountCents, 0);
 
             return (
               <tr key={candidate.categoryId} data-testid="goal-row">
@@ -138,7 +159,9 @@ export function BudgetMakingScreen({
                     aria-label={`Goal for ${categoryName(candidate.categoryId)}`}
                     data-testid="goal-input"
                     data-suggestion={draft.isSuggestion ? 'true' : 'false'}
-                    value={shown === null ? '' : (shown / 100).toFixed(2)}
+                    value={shownText}
+                    inputMode="decimal"
+                    aria-invalid={parsed === 'invalid'}
                     onChange={(e) => typeAmount(candidate.categoryId, e.target.value)}
                     style={{
                       width: 100,
@@ -191,10 +214,21 @@ function initialDrafts(month: BudgetMonth): Map<number, Draft> {
     month.envelopeCandidates.map((c) => [
       c.categoryId,
       c.envelopeAmountCents !== null
-        ? { value: c.envelopeAmountCents, isSuggestion: false }
-        : { value: null, isSuggestion: c.suggestedAmountCents !== null },
+        ? { text: centsToInput(c.envelopeAmountCents), isSuggestion: false }
+        : { text: '', isSuggestion: c.suggestedAmountCents !== null },
     ]),
   );
+}
+
+/**
+ * Cents as editable input text — plain `123.45`, no thousands separators or
+ * currency symbol, so the value stays easy to edit. `formatCents` is for
+ * display; this is for a text field the user is about to type into.
+ */
+function centsToInput(cents: number): string {
+  const sign = cents < 0 ? '-' : '';
+  const abs = Math.abs(cents);
+  return `${sign}${Math.floor(abs / 100)}.${String(abs % 100).padStart(2, '0')}`;
 }
 
 function originalValue(month: BudgetMonth, categoryId: number): number | null {

@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import {
   zBudgetCreate,
   zBudgetLineCreate,
@@ -17,7 +17,7 @@ import {
   snapshotLine,
 } from '../budgets/materialize';
 import { envelopeRelevantCategories, reconcileMonth } from '../budgets/reconcile';
-import { isTemplateDue, previousMonth } from '../budgets/months';
+import { clampDayToMonth, isTemplateDue, previousMonth } from '../budgets/months';
 import { serializeBudgetLine } from './serialize';
 
 /**
@@ -47,7 +47,7 @@ export function registerBudgetRoutes(app: FastifyInstance, db: Db, currentMonth:
       if (month !== currentMonth() && !explicitlyOpened) {
         return { month, uncreated: true as const };
       }
-      budget = materializeMonth(db, month).budget;
+      budget = materializeMonth(db, month, currentMonth()).budget;
     }
 
     const reconciliation = reconcileMonth(db, budget.id, month);
@@ -76,7 +76,7 @@ export function registerBudgetRoutes(app: FastifyInstance, db: Db, currentMonth:
     if (!parsed.success) {
       return reply.code(400).send({ error: 'validation', details: parsed.error.flatten() });
     }
-    const { budget, created } = materializeMonth(db, parsed.data.month);
+    const { budget, created } = materializeMonth(db, parsed.data.month, currentMonth());
     const lines = await db.select().from(budgetLines).where(eq(budgetLines.budgetId, budget.id));
     // Re-materializing is a no-op rather than an error: the caller asked for the
     // month to exist, and it does. 200 vs 201 distinguishes the two.
@@ -123,7 +123,7 @@ export function registerBudgetRoutes(app: FastifyInstance, db: Db, currentMonth:
       return reply.code(400).send({ error: 'validation', details: parsed.error.flatten() });
     }
 
-    const { budget } = materializeMonth(db, month);
+    const { budget } = materializeMonth(db, month, currentMonth());
     const categoryRows = new Map(
       db
         .select()
@@ -158,29 +158,41 @@ export function registerBudgetRoutes(app: FastifyInstance, db: Db, currentMonth:
       }
     }
 
-    for (const entry of parsed.data.envelopes) {
-      const existing = findEnvelopeForCategory(db, budget.id, entry.categoryId);
-      if (entry.amountCents === null) {
-        if (existing) db.delete(budgetLines).where(eq(budgetLines.id, existing.id)).run();
-        continue;
-      }
-      if (existing) {
-        db.update(budgetLines)
-          .set({ amountCents: entry.amountCents, updatedAt: new Date() })
-          .where(eq(budgetLines.id, existing.id))
+    // One transaction: the payload was validated as a whole, so it must apply as
+    // a whole. A mid-loop failure that left some categories saved would report a
+    // 500 while having silently changed the month's plan.
+    const existingByCategory = new Map(
+      parsed.data.envelopes.map((entry) => [
+        entry.categoryId,
+        findEnvelopeForCategory(db, budget.id, entry.categoryId),
+      ]),
+    );
+
+    db.transaction((tx) => {
+      for (const entry of parsed.data.envelopes) {
+        const existing = existingByCategory.get(entry.categoryId);
+        if (entry.amountCents === null) {
+          if (existing) tx.delete(budgetLines).where(eq(budgetLines.id, existing.id)).run();
+          continue;
+        }
+        if (existing) {
+          tx.update(budgetLines)
+            .set({ amountCents: entry.amountCents, updatedAt: new Date() })
+            .where(eq(budgetLines.id, existing.id))
+            .run();
+          continue;
+        }
+        tx.insert(budgetLines)
+          .values({
+            budgetId: budget.id,
+            kind: 'envelope',
+            name: categoryRows.get(entry.categoryId)!.name,
+            categoryId: entry.categoryId,
+            amountCents: entry.amountCents,
+          })
           .run();
-        continue;
       }
-      db.insert(budgetLines)
-        .values({
-          budgetId: budget.id,
-          kind: 'envelope',
-          name: categoryRows.get(entry.categoryId)!.name,
-          categoryId: entry.categoryId,
-          amountCents: entry.amountCents,
-        })
-        .run();
-    }
+    });
 
     const lines = await db.select().from(budgetLines).where(eq(budgetLines.budgetId, budget.id));
     return { month: budget.month, budgetId: budget.id, lines: lines.map(serializeBudgetLine) };
@@ -201,7 +213,7 @@ export function registerBudgetRoutes(app: FastifyInstance, db: Db, currentMonth:
     }
     const body = parsed.data;
 
-    const { budget } = materializeMonth(db, month);
+    const { budget } = materializeMonth(db, month, currentMonth());
     const failure = validateLine(db, {
       budgetId: budget.id,
       categoryId: body.categoryId,
@@ -241,7 +253,8 @@ export function registerBudgetRoutes(app: FastifyInstance, db: Db, currentMonth:
   });
 
   app.patch('/api/budgets/:month/lines/:id', async (req, reply) => {
-    const id = Number((req.params as { id: string }).id);
+    const { month, id: rawId } = req.params as { month: string; id: string };
+    const id = Number(rawId);
     if (!Number.isInteger(id)) {
       return reply.code(400).send({ error: 'invalid id' });
     }
@@ -251,7 +264,7 @@ export function registerBudgetRoutes(app: FastifyInstance, db: Db, currentMonth:
     }
     const patch = parsed.data;
 
-    const existing = db.select().from(budgetLines).where(eq(budgetLines.id, id)).get();
+    const existing = findLineInMonth(db, month, id);
     if (!existing) {
       return reply.code(404).send({ error: 'budget line not found' });
     }
@@ -293,7 +306,14 @@ export function registerBudgetRoutes(app: FastifyInstance, db: Db, currentMonth:
         ...(patch.name !== undefined && { name: patch.name }),
         ...(patch.categoryId !== undefined && { categoryId: patch.categoryId }),
         ...(patch.amountCents !== undefined && { amountCents: patch.amountCents }),
-        ...('expectedDayOfMonth' in patch && { expectedDayOfMonth: patch.expectedDayOfMonth }),
+        // Clamped exactly as on materialization (decision 003-A) — a patch must
+        // not be able to store a day the month does not have.
+        ...('expectedDayOfMonth' in patch && {
+          expectedDayOfMonth:
+            patch.expectedDayOfMonth == null
+              ? patch.expectedDayOfMonth
+              : clampDayToMonth(patch.expectedDayOfMonth, month),
+        }),
         ...(patch.matchNormalizedCounterparty !== undefined && {
           matchNormalizedCounterparty: patch.matchNormalizedCounterparty,
         }),
@@ -308,11 +328,12 @@ export function registerBudgetRoutes(app: FastifyInstance, db: Db, currentMonth:
   });
 
   app.delete('/api/budgets/:month/lines/:id', async (req, reply) => {
-    const id = Number((req.params as { id: string }).id);
+    const { month, id: rawId } = req.params as { month: string; id: string };
+    const id = Number(rawId);
     if (!Number.isInteger(id)) {
       return reply.code(400).send({ error: 'invalid id' });
     }
-    const existing = db.select().from(budgetLines).where(eq(budgetLines.id, id)).get();
+    const existing = findLineInMonth(db, month, id);
     if (!existing) {
       return reply.code(404).send({ error: 'budget line not found' });
     }
@@ -352,6 +373,15 @@ export function registerBudgetRoutes(app: FastifyInstance, db: Db, currentMonth:
     if (!isTemplateDue(template, month)) {
       return reply.code(400).send({ error: `template is not due in ${month}` });
     }
+    // Same window `addableToMonths` offers. A closed past month is the
+    // historical record of what was planned then; a template created today does
+    // not retroactively become part of it.
+    if (month < currentMonth()) {
+      return reply.code(400).send({
+        error: `${month} is closed and cannot take new lines`,
+        hint: 'past months are a historical record; add the line to the current month or later',
+      });
+    }
 
     const failure = validateLine(db, {
       budgetId: budget.id,
@@ -365,6 +395,27 @@ export function registerBudgetRoutes(app: FastifyInstance, db: Db, currentMonth:
     const row = db.insert(budgetLines).values(snapshotLine(budget.id, template, month)).returning().get();
     return reply.code(201).send(serializeBudgetLine(row));
   });
+}
+
+/**
+ * A line resolved **within the month that addresses it**. Resolving by `id`
+ * alone would let `DELETE /api/budgets/2025-08/lines/:id` destroy a line
+ * belonging to 2026-05 — already-materialized months are a historical record,
+ * and line deletion is durable by design, so a cross-month write is
+ * unrecoverable. A line addressed through the wrong month is simply not found.
+ */
+function findLineInMonth(
+  db: Db,
+  month: string,
+  id: number,
+): typeof budgetLines.$inferSelect | undefined {
+  const budget = db.select().from(budgets).where(eq(budgets.month, month)).get();
+  if (!budget) return undefined;
+  return db
+    .select()
+    .from(budgetLines)
+    .where(and(eq(budgetLines.id, id), eq(budgetLines.budgetId, budget.id)))
+    .get();
 }
 
 /**
@@ -483,9 +534,12 @@ function envelopeCandidates(
   );
 
   return envelopeRelevantCategories(db)
-    // Archived categories are omitted unless they already have a line in this
-    // month, symmetric with what `PUT …/envelopes` will accept.
-    .filter((c) => c.archivedAt === null || lines.some((l) => l.categoryId === c.id))
+    // Archived categories are omitted unless they already hold an **envelope**
+    // this month. The predicate must match `PUT …/envelopes` exactly: keying it
+    // on any line would offer a goal input for an archived category that only
+    // holds a materialized bill, and the save would then 400 — discarding every
+    // other goal in the same payload, since validation covers the whole request.
+    .filter((c) => c.archivedAt === null || envelopes.has(c.id))
     .map((c) => ({
       categoryId: c.id,
       envelopeAmountCents: envelopes.get(c.id) ?? null,

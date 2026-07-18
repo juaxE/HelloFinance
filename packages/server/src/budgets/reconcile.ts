@@ -130,6 +130,23 @@ export function reconcileMonth(db: Db, budgetId: number, month: string): Reconci
   const remaining = m.filter((t) => !consumed.has(t.id));
 
   // Step 2 — envelopes take their category's remainder.
+  //
+  // Behavior follows the match key, not `kind` (decision 003-G), so a keyless
+  // line reconciles as an envelope whatever its kind says. The API cannot create
+  // one (003-J/003-L), but the column is nullable, so a seed script or a future
+  // migration could — and two keyless lines in one category would BOTH take the
+  // full remainder, double-counting `actualCents` and breaking the tie-out. A
+  // broken tie-out is a critical finding, so refuse to report a number instead.
+  const keylessNonEnvelope = lines.find(
+    (l) => l.matchNormalizedCounterparty === null && l.kind !== 'envelope',
+  );
+  if (keylessNonEnvelope) {
+    throw new Error(
+      `budget line ${keylessNonEnvelope.id} (kind=${keylessNonEnvelope.kind}) has no match key; ` +
+        `only envelopes may be keyless (decisions 003-J, 003-L)`,
+    );
+  }
+
   const envelopeLines = lines.filter((l) => l.matchNormalizedCounterparty === null);
   const envelopeByCategory = new Map(envelopeLines.map((l) => [l.categoryId, l]));
   for (const line of envelopeLines) {

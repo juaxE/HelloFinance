@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { Category, LabelingRule, RecurringTemplate } from '@finance/shared';
 import { api } from '../api';
-import { formatCents } from '../format';
+import { formatCents, parseEurosToCents } from '../format';
 
 /**
  * Recurring templates — the bill plan (spec 003).
@@ -32,6 +32,7 @@ export function TemplatesTable({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [draft, setDraft] = useState(emptyDraft);
+  const [editing, setEditing] = useState<TemplateEdit | null>(null);
 
   const categoryName = (id: number) => categories.find((c) => c.id === id)?.name ?? `#${id}`;
 
@@ -46,14 +47,67 @@ export function TemplatesTable({
     ? keyOwner(draft.matchNormalizedCounterparty.trim())
     : undefined;
 
+  /**
+   * Template editing. Cadence and start month are deliberately not editable:
+   * they define which months a template has already materialized into, and
+   * those months are a historical record. Amount, day, name, category and
+   * counterparty apply to **future** months only — the same snapshot rule the
+   * heading states.
+   */
+  function startEdit(t: RecurringTemplate) {
+    setError(null);
+    setEditing({
+      id: t.id,
+      name: t.name,
+      categoryId: String(t.categoryId),
+      amountEuros: centsToInput(t.amountCents),
+      expectedDayOfMonth: String(t.expectedDayOfMonth),
+      matchNormalizedCounterparty: t.matchNormalizedCounterparty ?? '',
+    });
+  }
+
+  async function saveEdit() {
+    if (!editing) return;
+    setError(null);
+    const amountCents = parseEurosToCents(editing.amountEuros);
+    if (amountCents === null || amountCents === 'invalid') {
+      setError('Enter an amount, e.g. 49,90');
+      return;
+    }
+    if (editing.matchNormalizedCounterparty.trim() === '') {
+      setError('A bill needs a counterparty — for a category goal, use an envelope instead');
+      return;
+    }
+    try {
+      await api.patchRecurringTemplate(editing.id, {
+        name: editing.name,
+        categoryId: Number(editing.categoryId),
+        amountCents,
+        expectedDayOfMonth: Number(editing.expectedDayOfMonth),
+        matchNormalizedCounterparty: editing.matchNormalizedCounterparty.trim(),
+      });
+      setEditing(null);
+      onChanged();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'failed to save the template');
+    }
+  }
+
   async function create() {
     setError(null);
     setNotice(null);
+    // Parsed by string surgery, never `euros * 100` — money is integer cents
+    // (CLAUDE.md non-negotiable #3).
+    const amountCents = parseEurosToCents(draft.amountEuros);
+    if (amountCents === null || amountCents === 'invalid') {
+      setError('Enter an amount, e.g. 49,90');
+      return;
+    }
     try {
       const created = await api.createRecurringTemplate({
         name: draft.name,
         categoryId: Number(draft.categoryId),
-        amountCents: Math.round(Number(draft.amountEuros.replace(',', '.')) * 100),
+        amountCents,
         intervalMonths: Number(draft.intervalMonths),
         expectedDayOfMonth: Number(draft.expectedDayOfMonth),
         startMonth: draft.startMonth,
@@ -147,26 +201,91 @@ export function TemplatesTable({
           </tr>
         </thead>
         <tbody>
-          {templates.map((t) => (
-            <tr key={t.id} data-testid="template-row">
-              <td>{t.name}</td>
-              <td>{categoryName(t.categoryId)}</td>
-              <td style={{ textAlign: 'right' }}>{formatCents(t.amountCents)}</td>
-              <td>{cadenceLabel(t.intervalMonths)}</td>
-              <td>{t.expectedDayOfMonth}</td>
-              <td>{t.startMonth}</td>
-              <td>{t.endMonth ?? ''}</td>
-              <td>{t.matchNormalizedCounterparty}</td>
-              <td style={{ whiteSpace: 'nowrap' }}>
-                <button aria-label={`End ${t.name}`} onClick={() => endTemplate(t.id)}>
-                  End
-                </button>{' '}
-                <button aria-label={`Delete ${t.name}`} onClick={() => remove(t.id)}>
-                  Delete
-                </button>
-              </td>
-            </tr>
-          ))}
+          {templates.map((t) =>
+            editing?.id === t.id ? (
+              <tr key={t.id} data-testid="template-row">
+                <td>
+                  <input
+                    aria-label={`Name for ${t.name}`}
+                    value={editing.name}
+                    onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+                  />
+                </td>
+                <td>
+                  <select
+                    aria-label={`Category for ${t.name}`}
+                    value={editing.categoryId}
+                    onChange={(e) => setEditing({ ...editing, categoryId: e.target.value })}
+                  >
+                    {categories
+                      .filter((c) => c.systemKey !== 'transfer' && !c.isIncomeSource)
+                      .map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                  </select>
+                </td>
+                <td style={{ textAlign: 'right' }}>
+                  <input
+                    aria-label={`Amount for ${t.name}`}
+                    inputMode="decimal"
+                    style={{ width: 90, textAlign: 'right' }}
+                    value={editing.amountEuros}
+                    onChange={(e) => setEditing({ ...editing, amountEuros: e.target.value })}
+                  />
+                </td>
+                <td>{cadenceLabel(t.intervalMonths)}</td>
+                <td>
+                  <input
+                    aria-label={`Day for ${t.name}`}
+                    style={{ width: 48 }}
+                    value={editing.expectedDayOfMonth}
+                    onChange={(e) => setEditing({ ...editing, expectedDayOfMonth: e.target.value })}
+                  />
+                </td>
+                <td>{t.startMonth}</td>
+                <td>{t.endMonth ?? ''}</td>
+                <td>
+                  <input
+                    aria-label={`Counterparty for ${t.name}`}
+                    value={editing.matchNormalizedCounterparty}
+                    onChange={(e) =>
+                      setEditing({ ...editing, matchNormalizedCounterparty: e.target.value })
+                    }
+                  />
+                </td>
+                <td style={{ whiteSpace: 'nowrap' }}>
+                  <button data-testid="save-template" onClick={saveEdit}>
+                    Save
+                  </button>{' '}
+                  <button onClick={() => setEditing(null)}>Cancel</button>
+                </td>
+              </tr>
+            ) : (
+              <tr key={t.id} data-testid="template-row">
+                <td>{t.name}</td>
+                <td>{categoryName(t.categoryId)}</td>
+                <td style={{ textAlign: 'right' }}>{formatCents(t.amountCents)}</td>
+                <td>{cadenceLabel(t.intervalMonths)}</td>
+                <td>{t.expectedDayOfMonth}</td>
+                <td>{t.startMonth}</td>
+                <td>{t.endMonth ?? ''}</td>
+                <td>{t.matchNormalizedCounterparty}</td>
+                <td style={{ whiteSpace: 'nowrap' }}>
+                  <button aria-label={`Edit ${t.name}`} onClick={() => startEdit(t)}>
+                    Edit
+                  </button>{' '}
+                  <button aria-label={`End ${t.name}`} onClick={() => endTemplate(t.id)}>
+                    End
+                  </button>{' '}
+                  <button aria-label={`Delete ${t.name}`} onClick={() => remove(t.id)}>
+                    Delete
+                  </button>
+                </td>
+              </tr>
+            ),
+          )}
         </tbody>
       </table>
 
@@ -266,6 +385,23 @@ function cadenceLabel(intervalMonths: number): string {
   if (intervalMonths === 3) return 'Quarterly';
   if (intervalMonths === 12) return 'Yearly';
   return `Every ${intervalMonths} months`;
+}
+
+/** The editable subset of a template — see `startEdit` for what is left out. */
+type TemplateEdit = {
+  id: number;
+  name: string;
+  categoryId: string;
+  amountEuros: string;
+  expectedDayOfMonth: string;
+  matchNormalizedCounterparty: string;
+};
+
+/** Cents as editable input text: plain `49.90`, no separators or symbol. */
+function centsToInput(cents: number): string {
+  const sign = cents < 0 ? '-' : '';
+  const abs = Math.abs(cents);
+  return `${sign}${Math.floor(abs / 100)}.${String(abs % 100).padStart(2, '0')}`;
 }
 
 function emptyDraft() {

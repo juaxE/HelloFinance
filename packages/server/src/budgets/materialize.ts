@@ -11,7 +11,7 @@
 import { and, eq } from 'drizzle-orm';
 import type { Db } from '../db/client';
 import { budgetLines, budgets, recurringTemplates } from '../db/schema';
-import { clampDayToMonth, isTemplateDue } from './months';
+import { clampDayToMonth, isTemplateDue, isTemplateEnded } from './months';
 
 type Budget = typeof budgets.$inferSelect;
 
@@ -25,24 +25,38 @@ type Budget = typeof budgets.$inferSelect;
  * (review Q2), not an accident of the unique index — the month row's existence,
  * not the line set, is what records "this month has been materialized".
  */
-export function materializeMonth(db: Db, month: string): { budget: Budget; created: boolean } {
+export function materializeMonth(
+  db: Db,
+  month: string,
+  currentMonth: string,
+): { budget: Budget; created: boolean } {
   const existing = db.select().from(budgets).where(eq(budgets.month, month)).get();
   if (existing) {
     return { budget: existing, created: false };
   }
 
-  const budget = db.insert(budgets).values({ month }).returning().get();
+  // Decision 003-N enforces key uniqueness only over **non-ended** templates, so
+  // that replacing a provider can reuse the counterparty. Materialization must
+  // read templates over that same set or the two rules contradict each other: an
+  // ended template and its replacement share a key, and any month at or before
+  // the ended one's `end_month` would materialize BOTH, double-counting the bill
+  // in `plannedCents` while the tie-out still passed. Ending a bill therefore
+  // stops it from appearing in months created from here on; months it was
+  // already materialized into keep their lines as the historical record.
+  const due = db
+    .select()
+    .from(recurringTemplates)
+    .all()
+    .filter((template) => !isTemplateEnded(template, currentMonth))
+    .filter((template) => isTemplateDue(template, month));
 
-  // Template keys are unique across non-ended templates (decision 003-N), and
-  // materialization inserts one line per due template — so this loop cannot
-  // produce a same-key collision by construction, and needs no collision
-  // handling of its own. That is the point of enforcing uniqueness one level up.
-  for (const template of db.select().from(recurringTemplates).all()) {
-    if (!isTemplateDue(template, month)) continue;
-    db.insert(budgetLines).values(snapshotLine(budget.id, template, month)).run();
-  }
-
-  return { budget, created: true };
+  return db.transaction((tx) => {
+    const budget = tx.insert(budgets).values({ month }).returning().get();
+    for (const template of due) {
+      tx.insert(budgetLines).values(snapshotLine(budget.id, template, month)).run();
+    }
+    return { budget, created: true };
+  });
 }
 
 /**

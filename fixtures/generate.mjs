@@ -532,10 +532,20 @@ function incomeSources(rows) {
 // import, it surfaces in "Needs review" with a POSITIVE amount. Criterion 11b
 // then labels it Transfer/income, which legitimately removes it from M — hence
 // both expense totals, with and without the row.
+// `TYPE_HINT_EXCLUDED` are the transaction types the import pipeline maps onto
+// the two category groups M excludes: PALKKA -> Income (is_income_source) and
+// OMA TILISIIRTO -> Transfer. This is a PROXY for the category rule, and only
+// stays faithful while those hints are the sole source of category assignment on
+// a fresh import. `budgets.reconcile.test.ts` recomputes this figure from the
+// DATABASE using the real category rule and asserts it equals the constant here,
+// so if a seeded labeling rule ever assigns an income-source category the two
+// diverge loudly instead of criterion 10 quietly checking nothing.
+const TYPE_HINT_EXCLUDED = ['PALKKA', 'OMA TILISIIRTO'];
+
 function mDefinitionExpense(rows, month, { excludeArchiveId = null } = {}) {
   return rows
     .filter((r) => r._month === month)
-    .filter((r) => r.type !== 'PALKKA' && r.type !== 'OMA TILISIIRTO')
+    .filter((r) => !TYPE_HINT_EXCLUDED.includes(r.type))
     .filter((r) => r.archiveId !== excludeArchiveId)
     .reduce((sum, r) => sum - r.amountCents, 0);
 }
@@ -647,9 +657,14 @@ const expected = {
   },
   // Spec 003 criterion 11: an uncategorized row surfacing in "Needs review"
   // with a signed amount, plus the M-definition expense totals with and without
-  // it, so the tie-out can be asserted across a relabel. Main account only —
-  // the tie-out test imports the main fixture alone.
-  needsReview: needsReviewCase(mainRows, '2026-04'),
+  // it, so the tie-out can be asserted across a relabel.
+  //
+  // Computed over BOTH accounts, matching `selectM`, which does not filter by
+  // account: a bill paid from the buffer account is still spending in the month
+  // it happened. Today every buffer row is an OMA TILISIIRTO leg, excluded from
+  // M as a Transfer, so this is numerically identical to a main-only figure —
+  // the point is that it stays correct if the buffer ever holds real spending.
+  needsReview: needsReviewCase([...mainRows, ...bufferRows], '2026-04'),
   normalizationExamples: NORMALIZATION_SAMPLES.map((raw) => ({ raw, normalized: normalize(raw) })),
   // Opening-balance boundary (decision 002-E). All amounts are exact and
   // independent of the PRNG so the recompute can be asserted cent-for-cent.

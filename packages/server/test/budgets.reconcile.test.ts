@@ -369,7 +369,18 @@ describe('spec 003 — named lines and envelopes', () => {
     expect(after.totals.expenseCents).toBe(before.totals.expenseCents);
     expect(after.totals.actualCents + after.totals.unbudgetedCents + after.totals.needsReviewCents)
       .toBe(before.totals.actualCents + before.totals.unbudgetedCents + before.totals.needsReviewCents);
-    expect(health).toBeGreaterThan(0); // Health no longer holds the gym spend
+    // Health no longer holds the gym spend: the gym rows were relabelled OUT of
+    // Health, and the named line reports them under Subscriptions either way, so
+    // Health must not be carrying that spend anywhere in the decomposition.
+    const healthAfter = after.categories.find(
+      (c: { categoryId: number }) => c.categoryId === health,
+    );
+    const healthUnbudgeted = after.unbudgeted.find(
+      (u: { categoryId: number }) => u.categoryId === health,
+    );
+    expect(healthAfter?.actualCents ?? 0).toBe(0);
+    expect(healthUnbudgeted?.actualCents ?? 0).toBe(0);
+
     expectTieOut(after);
   });
 
@@ -464,6 +475,16 @@ describe('spec 003 — tie-out and needs-review (criteria 10, 11)', () => {
     // spec 004 will use for its expense bucket.
     expect(month.totals.expenseCents).toBe(EXPECTED.needsReview.monthExpenseCentsWithRow);
     expectTieOut(month);
+
+    // The fixture derives that constant from transaction TYPE (PALKKA /
+    // OMA TILISIIRTO) as a proxy for 003-F's category rule. Recompute it here
+    // from the real rule — exclude Transfer and every income-source category,
+    // keep uncategorized — so the proxy cannot drift out of agreement silently.
+    // Without this, adding a labeling rule that assigns an income-source
+    // category would make criterion 10 assert two numbers that are both wrong.
+    expect(mDefinitionExpenseByCategory('2026-04')).toBe(
+      EXPECTED.needsReview.monthExpenseCentsWithRow,
+    );
 
     // Income is excluded from BOTH sides: no salary in the expense total, and
     // no Income category anywhere in unbudgeted or needs-review.
@@ -591,6 +612,29 @@ function expectedSpend(normalized: string, month: string): number {
     .all()
     .filter((t) => t.paymentDate.startsWith(month))
     .filter((t) => normalizeCounterparty(t.counterparty) === normalized)
+    .reduce((sum, t) => sum - t.amountCents, 0);
+}
+
+/**
+ * The month's expense total under 003-F's **category** rule: every transaction
+ * in the month except those in `Transfer` or an income-source category,
+ * uncategorized rows included. No account filter — `selectM` has none either.
+ */
+function mDefinitionExpenseByCategory(month: string): number {
+  const excluded = new Set(
+    db
+      .select()
+      .from(categories)
+      .all()
+      .filter((c) => c.systemKey === 'transfer' || c.isIncomeSource)
+      .map((c) => c.id),
+  );
+  return db
+    .select()
+    .from(transactions)
+    .all()
+    .filter((t) => t.paymentDate.startsWith(month))
+    .filter((t) => t.categoryId === null || !excluded.has(t.categoryId))
     .reduce((sum, t) => sum - t.amountCents, 0);
 }
 

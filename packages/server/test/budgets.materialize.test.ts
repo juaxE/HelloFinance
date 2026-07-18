@@ -212,11 +212,48 @@ describe('spec 003 — materialization', () => {
     expect(names).not.toContain('Ended');
     expect(names).not.toContain('Future');
 
-    // Both DO produce a line inside their own active window.
-    await materialize('2025-08');
-    expect(linesOfMonth('2025-08').map((l) => l.name)).toContain('Ended');
+    // A template that has not ended produces a line inside its active window.
     await materialize('2026-05');
     expect(linesOfMonth('2026-05').map((l) => l.name)).toContain('Future');
+
+    // An ENDED template does not, even for a month inside its own window:
+    // materialization reads the same non-ended set decision 003-N enforces key
+    // uniqueness over. Reading a wider set than 003-N protects is what let an
+    // ended template and its replacement both materialize under one key.
+    // Months it was already materialized into keep their lines (criterion 15).
+    await materialize('2025-08');
+    expect(linesOfMonth('2025-08').map((l) => l.name)).not.toContain('Ended');
+  });
+
+  it('an ended template and its replacement cannot both materialize under one match key', async () => {
+    await createTemplate({
+      name: 'Old insurer',
+      amountCents: 60000,
+      startMonth: '2025-07',
+      endMonth: '2026-01',
+      matchNormalizedCounterparty: 'LAHITAPIOLA',
+    });
+    // Accepted because the first has ended — the carve-out that makes switching
+    // providers possible without abandoning the counterparty.
+    await createTemplate({
+      name: 'New insurer',
+      amountCents: 70000,
+      startMonth: '2025-07',
+      matchNormalizedCounterparty: 'LAHITAPIOLA',
+    });
+
+    // A month BOTH are nominally due in (2025-09 <= the ended one's endMonth).
+    await materialize('2025-09');
+
+    const keyed = linesOfMonth('2025-09').filter(
+      (l) => l.matchNormalizedCounterparty === 'LAHITAPIOLA',
+    );
+    expect(keyed).toHaveLength(1);
+    expect(keyed[0]!.name).toBe('New insurer');
+
+    // The bill is planned once, at its real amount — not 1 300,00 €.
+    const month = await app.inject({ method: 'GET', url: '/api/budgets/2025-09' });
+    expect(month.json().totals.plannedCents).toBe(70000);
   });
 
   it('criterion 4: editing a template amount leaves already-materialized months untouched and applies to a later due month', async () => {

@@ -86,6 +86,23 @@ export function BudgetsPage() {
     }
   }
 
+  async function addOneOff(input: {
+    name: string;
+    categoryId: number;
+    amountCents: number;
+    matchNormalizedCounterparty: string;
+  }) {
+    // Errors propagate to the form, which renders them next to the fields that
+    // caused them — a 409 on a duplicate counterparty is actionable there.
+    await api.createBudgetLine(month, { kind: 'adhoc', ...input });
+    await load(month, { open: true });
+  }
+
+  async function saveNote(note: string | null) {
+    await api.patchBudgetMonth(month, note);
+    await load(month, { open: true });
+  }
+
   return (
     <section>
       <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '1rem' }}>
@@ -122,6 +139,8 @@ export function BudgetsPage() {
           categories={categories}
           onEditGoals={() => setEditingGoals(true)}
           onDeleteLine={deleteLine}
+          onAddOneOff={addOneOff}
+          onSaveNote={saveNote}
         />
       )}
 
@@ -144,7 +163,11 @@ export function BudgetsPage() {
         categories={categories}
         rules={rules}
         currentMonth={thisMonth()}
-        onChanged={() => load(month, { open: true })}
+        // Reloaded WITHOUT `open`: editing a template says nothing about the
+        // month being browsed, and materializing it would leave a trail of
+        // created months behind mere navigation (decision 003-C). A month the
+        // user actually opened is already materialized, so it still refreshes.
+        onChanged={() => load(month)}
       />
     </section>
   );

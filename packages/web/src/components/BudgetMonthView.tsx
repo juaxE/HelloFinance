@@ -1,5 +1,6 @@
+import { useEffect, useState } from 'react';
 import type { BudgetMonth, Category, ReconciledLine } from '@finance/shared';
-import { formatCents, formatDate } from '../format';
+import { formatCents, formatDate, parseEurosToCents } from '../format';
 
 /**
  * The month view (spec 003). Lines are grouped by **provenance** — Bills
@@ -17,11 +18,20 @@ export function BudgetMonthView({
   categories,
   onEditGoals,
   onDeleteLine,
+  onAddOneOff,
+  onSaveNote,
 }: {
   month: BudgetMonth;
   categories: Category[];
   onEditGoals: () => void;
   onDeleteLine: (id: number) => void;
+  onAddOneOff: (input: {
+    name: string;
+    categoryId: number;
+    amountCents: number;
+    matchNormalizedCounterparty: string;
+  }) => Promise<void>;
+  onSaveNote: (note: string | null) => Promise<void>;
 }) {
   const categoryName = (id: number) => categories.find((c) => c.id === id)?.name ?? `#${id}`;
 
@@ -44,6 +54,8 @@ export function BudgetMonthView({
         </button>
       </header>
 
+      <MonthNote note={month.note} onSave={onSaveNote} />
+
       <LineGroup
         title="Bills"
         testId="group-bills"
@@ -61,6 +73,7 @@ export function BudgetMonthView({
         onDeleteLine={onDeleteLine}
         emptyText="No one-off lines this month."
       />
+      <AddOneOffForm categories={categories} onAdd={onAddOneOff} />
       <LineGroup
         title="Envelopes"
         testId="group-envelopes"
@@ -109,6 +122,7 @@ export function BudgetMonthView({
                   misreport them.
                 */}
                 <td
+                  data-testid="needs-review-amount"
                   style={{
                     textAlign: 'right',
                     color: r.amountCents > 0 ? 'var(--accent)' : 'inherit',
@@ -154,6 +168,170 @@ export function BudgetMonthView({
         </p>
       </footer>
     </section>
+  );
+}
+
+/**
+ * The month-level note (spec 003's UI sketch). Saved explicitly rather than on
+ * every keystroke — a budget month is a record, not a scratchpad.
+ */
+function MonthNote({
+  note,
+  onSave,
+}: {
+  note: string | null;
+  onSave: (note: string | null) => Promise<void>;
+}) {
+  const [text, setText] = useState(note ?? '');
+  const [saving, setSaving] = useState(false);
+
+  // The note belongs to the month; switching months must not carry it over.
+  useEffect(() => setText(note ?? ''), [note]);
+
+  const dirty = text !== (note ?? '');
+
+  return (
+    <div style={{ margin: '0.5rem 0 1rem' }}>
+      <label>
+        <span style={{ color: 'var(--muted)', marginRight: '0.5rem' }}>Note</span>
+        <input
+          data-testid="month-note"
+          aria-label="Month note"
+          value={text}
+          placeholder="Anything worth remembering about this month"
+          onChange={(e) => setText(e.target.value)}
+          style={{ width: '28rem', maxWidth: '100%' }}
+        />
+      </label>
+      {dirty && (
+        <button
+          data-testid="save-month-note"
+          disabled={saving}
+          style={{ marginLeft: '0.5rem' }}
+          onClick={async () => {
+            setSaving(true);
+            try {
+              await onSave(text.trim() === '' ? null : text);
+            } finally {
+              setSaving(false);
+            }
+          }}
+        >
+          {saving ? 'Saving…' : 'Save note'}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Add an ad-hoc line. A counterparty is **required** (decision 003-J): an
+ * unnamed one-off would be a category-level goal, which is what an envelope
+ * already is, so the form says so rather than letting the API 400 explain it.
+ */
+function AddOneOffForm({
+  categories,
+  onAdd,
+}: {
+  categories: Category[];
+  onAdd: (input: {
+    name: string;
+    categoryId: number;
+    amountCents: number;
+    matchNormalizedCounterparty: string;
+  }) => Promise<void>;
+}) {
+  const [name, setName] = useState('');
+  const [categoryId, setCategoryId] = useState('');
+  const [amount, setAmount] = useState('');
+  const [counterparty, setCounterparty] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function submit() {
+    setError(null);
+    const amountCents = parseEurosToCents(amount);
+    if (amountCents === null || amountCents === 'invalid') {
+      setError('Enter an amount, e.g. 120,00');
+      return;
+    }
+    if (categoryId === '') {
+      setError('Pick a category');
+      return;
+    }
+    if (counterparty.trim() === '') {
+      setError('A one-off needs a counterparty — for a category goal, raise the envelope instead');
+      return;
+    }
+    setBusy(true);
+    try {
+      await onAdd({
+        name: name.trim() === '' ? counterparty.trim() : name.trim(),
+        categoryId: Number(categoryId),
+        amountCents,
+        matchNormalizedCounterparty: counterparty.trim(),
+      });
+      setName('');
+      setCategoryId('');
+      setAmount('');
+      setCounterparty('');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'failed to add the line');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div data-testid="add-one-off" style={{ margin: '0.5rem 0 1.5rem' }}>
+      <h4 style={{ margin: '0 0 0.5rem' }}>Add a one-off (needs a counterparty)</h4>
+      {error && (
+        <p role="alert" style={{ color: 'var(--danger)', margin: '0 0 0.5rem' }}>
+          {error}
+        </p>
+      )}
+      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+        <label>
+          Name
+          <input aria-label="One-off name" value={name} onChange={(e) => setName(e.target.value)} />
+        </label>
+        <label>
+          Category
+          <select
+            aria-label="One-off category"
+            value={categoryId}
+            onChange={(e) => setCategoryId(e.target.value)}
+          >
+            <option value="">—</option>
+            {categories.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Amount (€)
+          <input
+            aria-label="One-off amount"
+            inputMode="decimal"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+          />
+        </label>
+        <label>
+          Counterparty
+          <input
+            aria-label="One-off counterparty"
+            value={counterparty}
+            onChange={(e) => setCounterparty(e.target.value)}
+          />
+        </label>
+        <button data-testid="add-one-off-submit" disabled={busy} onClick={submit}>
+          Add one-off
+        </button>
+      </div>
+    </div>
   );
 }
 
