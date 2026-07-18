@@ -8,6 +8,11 @@ export default defineConfig({
     host: '127.0.0.1',
     port: 5173,
     strictPort: true,
+    proxy: {
+      // The API server binds 127.0.0.1:3001 (see packages/server/src/config.ts).
+      '/api': 'http://127.0.0.1:3001',
+      '/health': 'http://127.0.0.1:3001',
+    },
   },
   preview: {
     host: '127.0.0.1',

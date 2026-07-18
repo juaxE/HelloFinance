@@ -1,25 +1,47 @@
-import { ACCOUNT_KINDS } from '@finance/shared';
+import { useState } from 'react';
+import { ImportPage } from './components/ImportPage';
+import { RulesPage } from './components/RulesPage';
+import { TransactionsPage } from './components/TransactionsPage';
 
-/**
- * Placeholder application shell. Real views (dashboard, import/review, budgets,
- * settings) are added per the approved specs under `specs/`. The import from
- * `@finance/shared` exists to prove the monorepo wiring end-to-end.
- */
+type View = 'import' | 'transactions' | 'rules';
+
+const VIEWS: Array<{ id: View; label: string }> = [
+  { id: 'import', label: 'Import' },
+  { id: 'transactions', label: 'Transactions' },
+  { id: 'rules', label: 'Rules' },
+];
+
 export function App() {
+  const [view, setView] = useState<View>('import');
+
   return (
-    <main
-      style={{
-        fontFamily: 'system-ui, sans-serif',
-        maxWidth: 640,
-        margin: '4rem auto',
-        padding: '0 1rem',
-      }}
-    >
-      <h1>HelloFinance</h1>
-      <p>Local-first personal finance tracker. Scaffolding is in place.</p>
-      <p style={{ color: '#666', fontSize: '0.9rem' }}>
-        Shared package wired: <code>{ACCOUNT_KINDS.length} account kinds</code>
-      </p>
-    </main>
+    <div style={{ fontFamily: 'system-ui, sans-serif', maxWidth: 960, margin: '0 auto', padding: '1rem' }}>
+      <header style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', marginBottom: '1.5rem' }}>
+        <h1 style={{ fontSize: '1.25rem', margin: 0 }}>HelloFinance</h1>
+        <nav style={{ display: 'flex', gap: '0.5rem' }}>
+          {VIEWS.map((v) => (
+            <button
+              key={v.id}
+              onClick={() => setView(v.id)}
+              aria-current={view === v.id}
+              style={{
+                border: 'none',
+                background: view === v.id ? 'var(--accent)' : 'transparent',
+                color: view === v.id ? 'white' : 'inherit',
+                borderRadius: 6,
+                padding: '0.35rem 0.75rem',
+              }}
+            >
+              {v.label}
+            </button>
+          ))}
+        </nav>
+      </header>
+      <main>
+        {view === 'import' && <ImportPage />}
+        {view === 'transactions' && <TransactionsPage />}
+        {view === 'rules' && <RulesPage />}
+      </main>
+    </div>
   );
 }

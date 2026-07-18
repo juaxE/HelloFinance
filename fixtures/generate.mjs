@@ -362,6 +362,48 @@ const latinRows = [];
 const latinBuffer = [];
 generateMonth(latinRows, latinBuffer, 2025, 6);
 
+// --- Opening-balance boundary fixtures (spec 002 AC 11/12) ------------------
+// Built with fully explicit rows (no rand()/seq use) so they do not perturb any
+// of the numbers computed above from the main/buffer/overlap/latin data.
+function plainRow(y, m, d, amountCents, type, counterparty, archiveId) {
+  const pd = dateUTC(y, m, d);
+  const outgoing = amountCents < 0;
+  return {
+    bookingDate: pd,
+    paymentDate: pd,
+    amountCents,
+    type,
+    payer: outgoing ? OWNER_OUT : counterparty,
+    payee: outgoing ? counterparty : OWNER_IN,
+    iban: EMPTY,
+    bic: EMPTY,
+    reference: EMPTY,
+    message: `'-'`,
+    archiveId,
+  };
+}
+
+// AC 12 (002-E guard, negative): the latest row (2025-03) is earlier than a
+// 2025-06-01 opening date, so the excluded rows are a partial history and the
+// "Extend history" assist must NOT be offered (it would corrupt the balance).
+const gapRows = [
+  plainRow(2025, 2, 10, -2500, 'KORTTIOSTO', 'K-Market Kamppi 4021', 'GAP2025021000001'),
+  plainRow(2025, 3, 5, -7200, 'E-LASKU', 'Asunto Oy Helsingin Esimerkki', 'GAP2025030500002'),
+  plainRow(2025, 3, 20, -1500, 'KORTTIOSTO', 'Lidl Helsinki Vallila', 'GAP2025032000003'),
+];
+
+// AC 11 (002-E recompute, positive): bridges the gap (latest row 2025-06-20 ≥
+// the 2025-06-01 opening date) AND repeats an archive id in the before-opening
+// range (EXT…0001), so the recompute sum must count each excluded 'new' row
+// once — the duplicate_in_batch copy is not summed.
+const extendRows = [
+  plainRow(2025, 4, 10, -5000, 'KORTTIOSTO', 'Kukkakauppa Oy', 'EXT2025041000001'),
+  plainRow(2025, 4, 10, -5000, 'KORTTIOSTO', 'Kukkakauppa Oy', 'EXT2025041000001'), // in-batch dup
+  plainRow(2025, 5, 15, -3000, 'E-LASKU', 'Helen Oy', 'EXT2025051500002'),
+  plainRow(2025, 6, 1, -2000, 'KORTTIOSTO', 'HSL Mobiili', 'EXT2025060100003'), // on opening date: in-window
+  plainRow(2025, 6, 20, 7000, 'TILISIIRTO', 'VIPPS MOBILEPAY AS,', 'EXT2025062000004'),
+];
+
 // --- Normalization contract (mirrors spec 002; used to assert examples) -----
 // Brand-canonicalization list: known merchants whose different locations should
 // collapse to one rule key (owner decision 002-B: "merge same brand"). A
@@ -565,6 +607,30 @@ const expected = {
     })(),
   },
   normalizationExamples: NORMALIZATION_SAMPLES.map((raw) => ({ raw, normalized: normalize(raw) })),
+  // Opening-balance boundary (decision 002-E). All amounts are exact and
+  // independent of the PRNG so the recompute can be asserted cent-for-cent.
+  openingBalanceBoundary: {
+    extendHistory: {
+      path: 'synthetic/extend-2025-04_2025-06.csv',
+      account: 'main',
+      oldOpeningBalanceDate: '2025-06-01',
+      oldOpeningBalanceCents: 100000,
+      newOpeningBalanceDate: '2025-04-10', // earliest excluded row
+      newOpeningBalanceCents: 108000, // 100000 − (−8000)
+      excludedNewSumCents: -8000, // EXT…0001 (−5000) + EXT…0002 (−3000); the in-batch dup is not summed
+      extendedRowCount: 2, // before-opening 'new' rows
+      balanceAsOfDate: '2025-06-20',
+      preservedBalanceCents: 105000, // balance at 2025-06-20 is identical before and after extend
+    },
+    gap: {
+      path: 'synthetic/gap-2025-02_2025-03.csv',
+      account: 'main',
+      openingBalanceDate: '2025-06-01',
+      maxPaymentDate: '2025-03-20', // < opening date → assist not offered
+      rowCount: 3,
+      extendOffered: false,
+    },
+  },
 };
 
 // --- Write everything -------------------------------------------------------
@@ -576,6 +642,8 @@ writeFileSync(
   join(OUT_DIR, 'encoding-2025-06-latin1.csv'),
   Buffer.from(toCsv(latinRows), 'latin1'),
 );
+writeFileSync(join(OUT_DIR, 'gap-2025-02_2025-03.csv'), toCsv(gapRows), 'utf-8');
+writeFileSync(join(OUT_DIR, 'extend-2025-04_2025-06.csv'), toCsv(extendRows), 'utf-8');
 writeFileSync(join(HERE, 'expected.json'), `${JSON.stringify(expected, null, 2)}\n`, 'utf-8');
 
 console.log('Wrote synthetic fixtures:');

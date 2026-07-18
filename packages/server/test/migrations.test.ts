@@ -10,6 +10,7 @@ const ALL_TABLES = [
   'categories',
   'imports',
   'transactions',
+  'staged_transactions',
   'labeling_rules',
   'recurring_templates',
   'budgets',

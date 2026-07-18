@@ -299,6 +299,17 @@ counts: { total, new, duplicates }, groups: [...] }`.
 - **Rules management** (Settings): table of normalized counterparty → category,
   editable/deletable.
 
+> **Implementation status (2026-07-17):** fully implemented and validated —
+> adapter, normalization, dedup/staging pipeline, extend-history assist, all API
+> routes, and the review/transactions/rules UI. All 12 acceptance criteria below
+> pass (`packages/server/test/import-*.test.ts`, `*.routes.test.ts`); AC 12 is
+> `packages/web/e2e/review-screen.spec.ts`, run against `npm run seed:test` data.
+> Two additions beyond the API surface listed above, needed to make the spec's
+> own described behavior reachable: `POST /api/imports/:id/extend-history`
+> (decision 002-E has no endpoint in the original list) and `GET
+> /api/transactions` (the "Transactions list" UI needs a way to list them). Both
+> are small, additive, and documented inline at their route definitions.
+
 ## Acceptance criteria
 
 Assert against `fixtures/expected.json` (CLAUDE.md validation §5):

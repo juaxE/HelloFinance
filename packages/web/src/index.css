@@ -1,5 +1,20 @@
 :root {
   color-scheme: light dark;
+  --border: #d8d8d8;
+  --muted: #666;
+  --bg-subtle: #f7f7f7;
+  --accent: #2f6fed;
+  --danger: #c0392b;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --border: #3a3a3a;
+    --muted: #a0a0a0;
+    --bg-subtle: #1c1c1c;
+    --accent: #6ea1ff;
+    --danger: #e57373;
+  }
 }
 
 * {
@@ -8,4 +23,49 @@
 
 body {
   margin: 0;
+  font-family: system-ui, sans-serif;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 0.6rem;
+  background: var(--bg-subtle);
+}
+
+.badge {
+  display: inline-block;
+  font-size: 0.75rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.badge.warn {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.badge.rule {
+  border-color: var(--accent);
+  color: var(--accent);
 }

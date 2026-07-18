@@ -1,0 +1,27 @@
+import { createHash } from 'node:crypto';
+
+/**
+ * Fallback dedup key for future banks without a unique archive id
+ * (CLAUDE.md non-negotiable #4): hash of (account, payment date, amount,
+ * counterparty, reference, message). Computed for every row regardless of
+ * whether archive_id is present (cheap, future-proof) — see spec 002.
+ */
+export function computeContentHash(input: {
+  accountId: number;
+  paymentDate: string;
+  amountCents: number;
+  counterparty: string;
+  reference: string | null;
+  message: string | null;
+}): string {
+  const parts = [
+    String(input.accountId),
+    input.paymentDate,
+    String(input.amountCents),
+    input.counterparty,
+    input.reference ?? '',
+    input.message ?? '',
+  ];
+  // NUL-separated so no field's content can shift a value across the boundary.
+  return createHash('sha256').update(parts.join('\0')).digest('hex');
+}
