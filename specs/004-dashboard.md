@@ -274,6 +274,33 @@ Assert against `fixtures/expected.json` (CLAUDE.md validation §5, §6):
     eyeballed.
 11. Playwright screenshot of the dashboard with seeded data visible in every card.
 
+### Test-construction notes (criteria 7 and 8)
+
+Two of the criteria above have a failure mode in the **test**, not the
+implementation. Carry these into the implementation prompt's test rules.
+
+- **Criterion 7 must relabel with `scope: 'one_off'`.** The relabel goes through
+  `PATCH /api/transactions/:id`, and spec 002's `update_rule` scope is
+  **retroactive**: it upserts the labeling rule and relabels every committed
+  transaction sharing that `normalized_counterparty` whose
+  `category_source='rule'` (002 criterion 13). On a seed with a monthly Spotify
+  charge that silently moves **every** month's breakdown, not the one under test,
+  and the failure surfaces as an unrelated assertion three months away. Use
+  `one_off` — it sets `category_source='manual'` and leaves rules untouched, which
+  is exactly the single-transaction relabel the criterion describes. The test also
+  constructs the `SPOTIFY`-keyed named line (template or ad-hoc) in Subscriptions;
+  the seed is not required to ship one. Assert the neighbouring months' breakdowns
+  are **unchanged** as the guard that the scope was right.
+- **Criterion 8's "byte-identical" means wholesale comparison.** Capture the
+  **entire** `/dashboard/net-worth` response over the full available window before
+  archiving, and deep-equal it against the same request after. Do not reduce this
+  to spot-checking a month or two: the regression it guards against — excluding
+  archived assets from the net-worth query — shifts every month from the asset's
+  first snapshot onward, and a spot check picks the wrong months roughly as often
+  as the right ones. The subsequent closing-`0`-snapshot step asserts the
+  complement: months `≥ M` move by the loan balance, months `< M` deep-equal the
+  captured baseline.
+
 ## Deferred (needs a new approved spec)
 
 - Live investment pricing / automatic asset valuation (snapshots are manual).
