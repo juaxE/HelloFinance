@@ -15,3 +15,15 @@ export const PORT = Number(process.env.PORT ?? 3001);
  * this path — they pass an in-memory or tempfile database explicitly.
  */
 export const DATABASE_PATH = process.env.DATABASE_URL ?? 'data/app.db';
+
+/**
+ * Pins "today" for the running server, as `YYYY-MM-DD`. Unset in normal use, so
+ * the app follows the wall clock.
+ *
+ * It exists because the synthetic fixtures cover a fixed span (2025-07..2026-06)
+ * while "the current month" moves: without it, the dev app and the Playwright
+ * run would open the dashboard on a month the seed has no data for, and every
+ * current-month card would render empty. `buildApp` already accepts an injectable
+ * `now` for the same reason on the test side (see app.ts).
+ */
+export const NOW_OVERRIDE = process.env.FINANCE_NOW ?? null;

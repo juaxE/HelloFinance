@@ -1,12 +1,15 @@
 import { buildApp } from './app';
-import { HOST, PORT } from './config';
+import { HOST, NOW_OVERRIDE, PORT } from './config';
 import { getDb } from './db/client';
 import { runMigrations } from './db/migrate';
 
 const db = getDb();
 runMigrations(db);
 
-const app = buildApp(db);
+const app = buildApp(
+  db,
+  NOW_OVERRIDE ? { now: () => new Date(`${NOW_OVERRIDE}T12:00:00`) } : {},
+);
 
 app
   .listen({ host: HOST, port: PORT })
