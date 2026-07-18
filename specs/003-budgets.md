@@ -1,6 +1,6 @@
 # Spec 003 — Budgets (bills, envelopes, months, reconciliation)
 
-Status: draft, awaiting owner approval
+Status: **approved** (owner, 2026-07-18) — ready to implement.
 Depends on: 001 (schema), 002 (committed transactions to reconcile against).
 Depended on by: 004 (dashboard reads this spec's budget reconciliation).
 
@@ -10,8 +10,8 @@ Let the owner plan a month's spending with **two distinct instruments**, and
 reconcile planned vs. actual against imported transactions:
 
 - **Bills** — a `recurring_template` is a known charge: fixed amount, cadence, due
-  day, and (usually) a counterparty. It **materializes** into the month
-  automatically. Editing a template affects only **future** months;
+  day, and **a counterparty** (required — decision 003-L). It **materializes** into
+  the month automatically. Editing a template affects only **future** months;
   already-materialized months are a historical record.
 - **Envelopes** — a rough, per-month **goal for a category** ("Groceries: 400 this
   month"), set by hand when making the month's budget and expected to change month
@@ -29,7 +29,8 @@ determined by its **match key**, never by its `kind` (decision 003-G):
 
 - `recurring_templates` — the bill plan source (name, category, per-occurrence
   amount, `interval_months` cadence, expected day, `start_month`/`end_month`,
-  optional `match_normalized_counterparty`, optional `note`).
+  **required** `match_normalized_counterparty` (decision 003-L; the column stays
+  nullable, the requirement is enforced in Zod/API), optional `note`).
 - `budgets` — one row per materialized `YYYY-MM`, with an optional month-level `note`.
 - `budget_lines` — per-month **snapshot** of a template, an ad-hoc one-off, or an
   **envelope**. Carries its own `name`, `categoryId`, `amountCents`,
@@ -43,11 +44,15 @@ column is plain `text NOT NULL` in migration `0000` with **no** CHECK constraint
 so this is a **TypeScript-level enum change only — no SQL migration** (verified
 against `drizzle/0000_dusty_masque.sql:33`).
 
-| `kind`      | `match_normalized_counterparty` | `template_id` | `expected_day_of_month` | reconciles as               |
-| ----------- | ------------------------------- | ------------- | ----------------------- | --------------------------- |
-| `recurring` | optional (see OQ-1)             | set           | set (clamped)           | named if key, else category |
-| `adhoc`     | **required** (decision 003-J)   | null          | optional                | always named                |
-| `envelope`  | **must be null**                | null          | null                    | always category-level       |
+| `kind`      | `match_normalized_counterparty` | `template_id` | `expected_day_of_month` | reconciles as         |
+| ----------- | ------------------------------- | ------------- | ----------------------- | --------------------- |
+| `recurring` | **required** (decision 003-L)   | set           | set (clamped)           | always named          |
+| `adhoc`     | **required** (decision 003-J)   | null          | optional                | always named          |
+| `envelope`  | **must be null**                | null          | null                    | always category-level |
+
+Because both line-producing kinds now require a match key and envelopes forbid
+one, **every** line's behavior is determined at creation: `recurring` and `adhoc`
+are named, `envelope` is the category's remainder. There is no third case.
 
 These invariants are enforced in the Zod schemas and by the API on both `POST` and
 `PATCH` — e.g. clearing an ad-hoc line's match key, or setting one on an envelope,
@@ -179,23 +184,25 @@ under Income. It is excluded from **both** sides of the tie-out.
 .../lines` and `PATCH .../lines/:id`, steering to editing the existing line —
    the same medicine as 003-B.
 
-2. **Category-level lines** — in practice **envelopes**, plus (provisionally) any
-   `recurring` line that has no match key; see **OQ-1**. Actual = sum of the
-   **remaining** M rows in that line's category. **At most one category-level line
-   per category is allowed** (decision 003-B, restated by 003-I as "one envelope
-   per category"): a category-level line reconciles against a whole category, so
-   two of them competing for the same category's remainder would be ambiguous. The
-   API rejects the second (`409`) and points the user at either editing the
-   existing envelope or giving the new line a `match_normalized_counterparty`,
-   which can freely coexist because it consumes only its own matched transactions
-   in step 1.
+2. **Envelopes** — the only category-level lines (decision 003-L closed the
+   keyless-recurring case). Actual = sum of the **remaining** M rows in that
+   envelope's category. **At most one envelope per category** (decision 003-B,
+   restated by 003-I): an envelope reconciles against a whole category, so two of
+   them competing for the same remainder would be ambiguous. The API rejects the
+   second (`409`) and points the user at either editing the existing envelope or
+   giving the new line a `match_normalized_counterparty` — a named line can freely
+   coexist with the envelope, because it consumes only its own matched
+   transactions in step 1.
 3. **Unbudgeted spending**: remaining M rows in categories that have no line are
    surfaced as "unbudgeted" per category (so the month view reconciles to the full
    cash-flow expense total, not just budgeted categories).
 4. **Needs review**: remaining M rows with `category_id is null` belong to no
    category, so step 3's "categories that have no line" does not cover them. They
    are surfaced as their own **"Needs review"** bucket alongside unbudgeted —
-   never dropped. Dropping them would break the tie-out the moment anything is
+   never dropped. The bucket can hold **positive** rows too (an uncategorized
+   refund or payback), which net its sum down; both sides of the tie-out see the
+   same netting, so nothing breaks, but the bucket must **display signed amounts**
+   rather than presenting everything in it as spending. Dropping them would break the tie-out the moment anything is
    committed with `allowUncategorized` (spec 002), since 004 counts uncategorized
    rows as expenses (decision 003-F).
 
@@ -264,6 +271,13 @@ placeholder styling), and an untouched suggestion **creates no line**. Prefill
 must never auto-create envelopes: doing so would make every month look budgeted
 and destroy the "did I actually budget this month?" signal (decision 003-K).
 
+**Confirming a suggestion must not require retyping it.** With ~15 categories
+mostly unchanged month to month, "accept last month's number" is the common case,
+so each suggestion is **click/tap-to-confirm** (and keyboard-reachable): one
+interaction promotes it from suggestion styling to a confirmed amount. It still
+creates nothing until the month is saved — confirming changes the input's state,
+not the database.
+
 **Double-planning is allowed but must be visible.** A one-off can legitimately be
 planned twice — a named ad-hoc line for the car service _and_ a raised Transport
 envelope. Nothing rejects this (the named line consumes its charge, the envelope
@@ -291,7 +305,11 @@ glance rather than discovered at month end.
   envelope per listed category; a listed `amountCents: null` **deletes** that
   category's envelope; **categories omitted from the array are left untouched**
   (so a partial save can never silently wipe envelopes the screen didn't render).
-  Rejects income-source and `Transfer` categories (`400`).
+  Rejects income-source and `Transfer` categories (`400`), and rejects **creating**
+  an envelope for an **archived** category (`400`) — symmetric with the screen,
+  which omits archived categories unless they already have a line. **Updating or
+  deleting an existing** envelope on an archived category stays allowed, so a
+  category archived mid-month doesn't strand its envelope.
 - `POST /api/budgets/:month/lines` → add a line.
   - `{ kind:'adhoc', name, categoryId, amountCents, matchNormalizedCounterparty,
 expectedDayOfMonth?, note? }` — match key is **required** (`400` without it, with
@@ -314,7 +332,9 @@ expectedDayOfMonth?, note? }` — match key is **required** (`400` without it, w
   still references it, the API returns `409` and steers the user to setting
   `end_month` instead ("end, don't delete" — decision 003-H). Fields: `name`, `categoryId`,
   `amountCents` (per occurrence), `intervalMonths`, `expectedDayOfMonth`,
-  `startMonth`, `endMonth?`, `matchNormalizedCounterparty?`, `note?`. When a
+  `startMonth`, `endMonth?`, `matchNormalizedCounterparty` (**required** — `400`
+  without it, with a message pointing at envelopes for goals; decision 003-L),
+  `note?`. When a
   create/edit makes the template due in the current (already-materialized) month,
   the response carries an `addableToMonths: ['YYYY-MM']` hint the UI acts on to
   insert the line now (review Q1).
@@ -334,8 +354,8 @@ expectedDayOfMonth?, note? }` — match key is **required** (`400` without it, w
   materialized** into it (name + amount, read-only here), a **goal input**, and the
   **per-category planned subtotal** (envelope + named lines) so double-planning is
   visible. Prefilled suggestions render muted/placeholder-styled, clearly distinct
-  from a confirmed amount; typing confirms, and an untouched suggestion saves
-  nothing. Empty rows are styled as ordinary, not as warnings — no badge, no count
+  from a confirmed amount; typing **or a single click/tap on the suggestion**
+  confirms it, and an untouched suggestion saves nothing. Empty rows are styled as ordinary, not as warnings — no badge, no count
   of "unbudgeted categories", no nag (decision 003-K). One save action
   (`PUT …/envelopes`).
 - **Month view**: a month picker; lines grouped as **Bills** (recurring), **One-offs**
@@ -346,7 +366,9 @@ expectedDayOfMonth?, note? }` — match key is **required** (`400` without it, w
   labeled with is explicable rather than a mystery. An "Unbudgeted" group lists
   categories with spending but no line — neutral framing, it is a normal state — and
   a **"Needs review"** group lists the month's uncategorized transactions with a
-  link into the transaction list to label them. A month-level note field sits at the
+  link into the transaction list to label them, showing **signed** amounts (the
+  bucket can contain positive rows — an uncategorized payback — and must not render
+  them as spending). A month-level note field sits at the
   top. Buttons: "Add one-off (needs a counterparty)", "Edit goals" (back to the
   budget-making screen), "Materialize month" (if not yet created). A month footer
   totals planned vs. actual and shows the reconciliation tie-out to cash flow.
@@ -395,19 +417,29 @@ subscriptions):
     unbudgeted bucket, and uncategorized rows are counted by both.
 11. **Uncategorized surfaces, tie-out holds.** A transaction committed with
     `allowUncategorized` (spec 002) in month M appears in M's **"Needs review"**
-    bucket with its amount, and criterion 10's tie-out still holds for M with it
-    included. Labeling it into a category moves it out of needs-review into that
-    category's line or unbudgeted, and the tie-out holds again — the total does
-    not change.
-12. **Named-ness follows the match key, not `kind`.** `PATCH`-ing a
-    `match_normalized_counterparty` onto a keyless **recurring** line makes it
-    reconcile as a **named** line (consuming its matched transactions in step 1)
-    rather than at category level, and clearing it again reverts it. The same patch
-    against an **envelope** is rejected (`400`), and clearing an **ad-hoc** line's
-    key is rejected (`400`) — the per-`kind` invariant table holds under `PATCH`.
-    _(If **OQ-1** resolves toward requiring match keys on templates, the keyless-
-    recurring half of this criterion disappears and only the two `400` cases
-    remain.)_
+    bucket with its **signed** amount, and criterion 10's tie-out holds for M with
+    it included. Labeling it then splits into two cases, and **both** must be
+    asserted — the tie-out holds in each, but only (a) leaves the totals alone:
+    - **(a) Labeled into an expense category.** The row moves out of needs-review
+      into that category's envelope, named line, or unbudgeted. It stays in **M**,
+      so the month's expense total is **unchanged** on both sides.
+    - **(b) Labeled into `Transfer` or an income-source category.** The row leaves
+      **M** entirely — and leaves spec 004's expense bucket by the same rule — so
+      the month's expense total **changes**, identically on both sides. This is
+      correct, not a regression: the row was never expense spending. The seeded
+      incoming **`VIPPS MOBILEPAY AS`** paybacks (`TILISIIRTO`, e.g. +10,12 /
+      +11,71 / +15,78 € in `main-2025-07_2026-06.csv`) are exactly this shape —
+      plausibly uncategorized on import, then labeled income or transfer.
+
+    Asserting only (a) would leave the criterion's universal claim untested and
+    invite a later reader to file (b)'s changed total as a bug.
+
+12. **The per-`kind` invariant table holds under `PATCH`.** Setting a
+    `match_normalized_counterparty` on an **envelope** is rejected (`400`); clearing
+    it on a **recurring** or **ad-hoc** line is rejected (`400`). Retargeting a
+    named line's key to a different counterparty succeeds and moves which
+    transactions it consumes. `POST /api/recurring-templates` without a match key
+    is rejected (`400`) — decision 003-L.
 13. **Duplicate match key rejected.** Adding or patching a second line with a
     match key the month already has returns `409` (e.g. an ad-hoc line patched to
     the same counterparty as a materialized recurring line), and the month's
@@ -447,6 +479,9 @@ subscriptions):
     `envelopeAmountCents: null`, and M has **zero** envelope lines until a save.
     Opening and leaving M untouched leaves M with no envelope lines (asserted at
     the DB level, not just the UI). The first month ever has no suggestions at all.
+    **Click-to-confirm** a suggestion likewise creates no line until the month is
+    saved — assert the DB has no envelope for that category between the confirm and
+    the save, then exactly one with the suggested amount after it.
 21. **Envelope 0 ≠ no envelope.** A category with an explicit 0 envelope and spend
     in the month reconciles against that line (full overspend variance) and does
     **not** appear under "unbudgeted"; the same category with no envelope at all
@@ -460,6 +495,9 @@ subscriptions):
 23. **Envelope-relevant category set.** The budget-making surface offers goal
     inputs for exactly the categories in **M**'s scope — income-source categories
     and `Transfer` are absent — and `PUT …/envelopes` rejects them (`400`).
+    `PUT …/envelopes` also rejects **creating** an envelope for an archived
+    category (`400`), while updating and deleting an existing one on an archived
+    category succeed.
 24. **Bulk save is a partial upsert.** `PUT …/envelopes` creates/updates the listed
     categories, deletes one sent with `amountCents: null`, and leaves an envelope
     for a category **omitted** from the payload untouched.
@@ -483,6 +521,10 @@ subscriptions):
 > with a transaction committed under `allowUncategorized`, plus that month's
 > expense total including it — add a `needsReview: { month, amountCents,
 counterparty }` block alongside `recurringNegativeCases` when implementing.
+> Criterion **11b** additionally needs the month's expense total **with and
+> without** the row, since labeling it Transfer/income legitimately changes that
+> total; the incoming `VIPPS MOBILEPAY AS` paybacks already in
+> `main-2025-07_2026-06.csv` are the natural subject.
 >
 > **Envelope criteria (18–24) need no new fixtures.** Envelopes are user-created,
 > not seeded — those tests build their own envelopes over the existing seeded
@@ -515,10 +557,10 @@ counterparty }` block alongside `recurringNegativeCases` when implementing.
   You can still have a **named** line (matched by counterparty, e.g. "Spotify")
   alongside a category-level "Subscriptions" line: the named line consumes only its
   own matched transactions first, and the category-level line reconciles against the
-  remainder — no ambiguity. _Restated by 003-I (2026-07-18):_ the category-level
-  line is now the category's **envelope**, so this reads "**one envelope per
-  category per month**" (plus, provisionally, any keyless recurring line — see
-  OQ-1).
+  remainder — no ambiguity. _Restated by 003-I and 003-L (2026-07-18):_ the
+  category-level line is now the category's **envelope**, and it is the only kind
+  of category-level line, so this reads simply "**one envelope per category per
+  month**".
 - **003-C — Auto-materialize on GET.** ✅ Auto-materialize the current month and any
   month the user explicitly opens; other absent months return an uncreated marker.
 - **003-D — Named-line match source.** ✅ Set the match key manually, assisted.
@@ -527,7 +569,8 @@ counterparty }` block alongside `recurringNegativeCases` when implementing.
 ESIMERKKI`). Rather than guessing from the free-text template name (fragile), the
   template editor lets you **pick** the counterparty — from an existing labeling
   rule or a recent transaction — and stores that normalized key. Explicit and
-  reliable.
+  reliable. _Tightened by 003-L (2026-07-18):_ the pick is no longer optional —
+  every template must carry a match key.
 - **003-E — Non-monthly bills: due-month only (+ dashboard stat), 2026-07-16.** ✅
   Option (a). Each non-monthly charge materializes a budget line **only in its real
   due month** (decision 001-H) and reconciles against the actual transaction —
@@ -627,34 +670,41 @@ ESIMERKKI`). Rather than guessing from the free-text template name (fragile), th
    Definitions section (`004-dashboard.md:19-26`) already says exactly this, so
    today they agree — the note is to keep them agreeing, and to re-check on any
    004 edit.
-2. **Per-category breakdown now diverges from 003 by design** (from item 5/8, new).
-   003 reports a named line's matched amount under the **line's** category; a
-   transaction-category breakdown (what 004's spending-by-category view would
-   naturally compute) reports it under the **transaction's** category. After a
-   relabel these two per-category numbers legitimately differ while the **totals**
-   still agree. 004 must state which attribution its category chart uses and
-   acknowledge the divergence, rather than inheriting 003's rule silently or
-   tripping CLAUDE.md §6 over a difference that is not a bug. See **OQ-2**.
+2. **Per-category breakdown diverges from 003 by design** — **ruled in 003-M**:
+   004's category chart uses **transaction-category** attribution, 003 uses
+   line-category for named lines. After a relabel the two per-category numbers
+   legitimately differ while the **totals** still agree. 004 must **state this
+   explicitly** and cite 003-M, so the difference is never filed as a CLAUDE.md §6
+   tie-out violation. Do not let 004 inherit 003's line-attribution: that would
+   make the dashboard's category chart depend on budget configuration.
 
-## Open questions (owner to rule — do not implement past these)
+## Resolved decisions (owner, 2026-07-18 — OQ rulings)
 
-- **OQ-1 — May a `recurring` template still have no match key?** The schema allows
-  it and 003-D calls the key optional, but item 7's taxonomy ("named lines consume
-  their counterparty; envelopes take the remainder") has no room for a third,
-  keyless-recurring behavior. If keyless recurring lines persist, they are a second
-  category-level claimant and collide with that category's envelope — the exact
-  ambiguity 003-B and 003-J exist to prevent. **Provisionally** this spec keeps
-  them working and folds them into 003-B's one-category-level-line-per-category
-  rule (so a keyless recurring line blocks that category's envelope, and vice
-  versa). **Recommendation: require `match_normalized_counterparty` on templates**
-  — a bill has a counterparty by definition, and the "template without a
-  counterparty" use case is now served better by an envelope. That would be a
-  Zod/API-level requirement; the column stays nullable, so still no migration. It
-  changes 003-D's "optional" wording, so it is the owner's call, not mine.
-- **OQ-2 — Which attribution does 004's category breakdown use?** Line-category
-  (consistent with 003's month view) or transaction-category (consistent with "where
-  did the money actually go")? **Recommendation: transaction-category in 004**, with
-  the divergence documented on both sides — the two views answer different
-  questions, and forcing 004 to adopt line-attribution would make the dashboard's
-  category chart depend on budget configuration. Needs a ruling before 004 is
-  implemented.
+- **003-L — Templates require a match key** (closes OQ-1). ✅ Every
+  `recurring_template` must carry a `match_normalized_counterparty`; `POST`/`PATCH`
+  reject its absence (`400`). Zod/API-level — the column stays nullable, **no
+  migration**. _Context:_ the decisive argument is not just "a bill has a
+  counterparty". A **keyless monthly template would be a standing category budget
+  that materializes without monthly confirmation** — precisely the
+  envelope-as-template design 003-I and 003-K reject, since goals are set at
+  budget-making time and change month to month. Leaving keyless templates alive
+  would keep that dead design alive through a side door. Anything without a
+  counterparty is a goal, and goals are envelopes now. The **provider-switch** case
+  (insurance moves from `LÄHITAPIOLA` to `IF`) is handled by **editing the
+  template's key**, future-only like any other template edit — already-materialized
+  months keep their snapshot. Consequence: the reconciliation taxonomy has exactly
+  two behaviors with no third case, and 003-B's rule reduces to "one envelope per
+  category".
+- **003-M — 004's category breakdown uses transaction-category** (closes OQ-2). ✅
+  The dashboard answers "**where did the money go**"; 003's month view answers
+  "**how did my plan do**". 004's spending-by-category chart attributes each
+  transaction to **its own category**, while 003 attributes a named line's matched
+  amount to the **line's** category (003-G). The two per-category figures may
+  legitimately differ after a relabel; the **totals** still tie out. _Context:_ the
+  rejected alternative — 004 adopting line-attribution — would make the dashboard's
+  category chart **change when you add or re-categorize a budget line**, i.e.
+  reporting mutated by planning configuration. The divergence is documented on both
+  sides (here, and as a note for the 004 revision) so it is never mistaken for a
+  CLAUDE.md §6 tie-out violation.
+
+No open questions remain for this spec.
