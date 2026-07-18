@@ -11,6 +11,7 @@ import type {
   RowPatch,
   Transaction,
   TransactionPatch,
+  TransactionPatchResult,
 } from '@finance/shared';
 
 /** Thin fetch wrapper over the local API (loopback-only, no auth). */
@@ -79,7 +80,10 @@ export const api = {
     ),
 
   patchTransaction: (id: number, patch: TransactionPatch) =>
-    request<Transaction>(`/transactions/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+    request<TransactionPatchResult>(`/transactions/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
 
   listLabelingRules: () => request<LabelingRule[]>('/labeling-rules'),
 

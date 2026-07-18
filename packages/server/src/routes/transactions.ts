@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { and, desc, eq, type SQL } from 'drizzle-orm';
+import { and, desc, eq, inArray, type SQL } from 'drizzle-orm';
 import { zTransactionPatch } from '@finance/shared';
 import type { Db } from '../db/client';
 import { labelingRules, transactions } from '../db/schema';
@@ -47,14 +47,17 @@ export function registerTransactionRoutes(app: FastifyInstance, db: Db): void {
     }
 
     // 'update_rule' also upserts the labeling rule for this transaction's
-    // normalized counterparty; 'one_off' touches only this row. 'manual'
-    // always wins over any rule on future imports (non-negotiable #4 domain
-    // rule — see spec 002).
+    // normalized counterparty AND retroactively relabels the rows the rule had
+    // already (mis)labeled; 'one_off' touches only this row. The edited row
+    // itself is a direct user choice → 'manual' (always wins over any rule on
+    // future imports — non-negotiable #4). See spec 002 "Relabeling".
+    let relabeledCount = 0;
     if (patch.categoryId !== undefined && patch.scope === 'update_rule') {
+      const targetNormalized = normalizeCounterparty(existing.counterparty);
       await db
         .insert(labelingRules)
         .values({
-          normalizedCounterparty: normalizeCounterparty(existing.counterparty),
+          normalizedCounterparty: targetNormalized,
           categoryId: patch.categoryId,
           exampleRaw: existing.counterparty,
         })
@@ -62,6 +65,24 @@ export function registerTransactionRoutes(app: FastifyInstance, db: Db): void {
           target: labelingRules.normalizedCounterparty,
           set: { categoryId: patch.categoryId, updatedAt: new Date() },
         });
+
+      // Retroactive: every OTHER committed transaction sharing this normalized
+      // counterparty whose category came from a rule follows the corrected rule.
+      // `manual` / `type_hint` / uncategorized rows are never rewritten, and the
+      // edited row is handled separately below. `transactions` stores no
+      // normalized column, so normalize each rule-sourced row's counterparty.
+      const siblingIds = (
+        await db.select().from(transactions).where(eq(transactions.categorySource, 'rule'))
+      )
+        .filter((t) => t.id !== id && normalizeCounterparty(t.counterparty) === targetNormalized)
+        .map((t) => t.id);
+      if (siblingIds.length > 0) {
+        await db
+          .update(transactions)
+          .set({ categoryId: patch.categoryId, updatedAt: new Date() })
+          .where(inArray(transactions.id, siblingIds));
+        relabeledCount = siblingIds.length;
+      }
     }
 
     const [row] = await db
@@ -76,6 +97,6 @@ export function registerTransactionRoutes(app: FastifyInstance, db: Db): void {
       })
       .where(eq(transactions.id, id))
       .returning();
-    return serializeTransaction(row!);
+    return { transaction: serializeTransaction(row!), relabeledCount };
   });
 }

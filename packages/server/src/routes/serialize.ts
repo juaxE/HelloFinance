@@ -44,7 +44,6 @@ export function serializeTransaction(row: TransactionRow): Transaction {
     payee: row.payee,
     counterparty: row.counterparty,
     counterpartyIban: row.counterpartyIban,
-    counterpartyBic: row.counterpartyBic,
     reference: row.reference,
     message: row.message,
     archiveId: row.archiveId,

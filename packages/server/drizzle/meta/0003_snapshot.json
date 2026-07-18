@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "34a00f93-edca-4baf-8fe7-ba33e2f50c84",
+  "id": "17f8ed50-33e7-4985-81e9-8e9b02e31225",
   "prevId": "5df3d9eb-bb6c-4656-a460-1e0e2bc59e24",
   "tables": {
     "accounts": {
@@ -816,13 +816,6 @@
           "notNull": false,
           "autoincrement": false
         },
-        "counterparty_bic": {
-          "name": "counterparty_bic",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
         "reference": {
           "name": "reference",
           "type": "text",
@@ -1053,13 +1046,6 @@
         },
         "counterparty_iban": {
           "name": "counterparty_iban",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "counterparty_bic": {
-          "name": "counterparty_bic",
           "type": "text",
           "primaryKey": false,
           "notNull": false,

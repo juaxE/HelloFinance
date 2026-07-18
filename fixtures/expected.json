@@ -299,5 +299,27 @@
       "raw": "Lidl Helsinki Vallila",
       "normalized": "LIDL"
     }
-  ]
+  ],
+  "openingBalanceBoundary": {
+    "extendHistory": {
+      "path": "synthetic/extend-2025-04_2025-06.csv",
+      "account": "main",
+      "oldOpeningBalanceDate": "2025-06-01",
+      "oldOpeningBalanceCents": 100000,
+      "newOpeningBalanceDate": "2025-04-10",
+      "newOpeningBalanceCents": 108000,
+      "excludedNewSumCents": -8000,
+      "extendedRowCount": 2,
+      "balanceAsOfDate": "2025-06-20",
+      "preservedBalanceCents": 105000
+    },
+    "gap": {
+      "path": "synthetic/gap-2025-02_2025-03.csv",
+      "account": "main",
+      "openingBalanceDate": "2025-06-01",
+      "maxPaymentDate": "2025-03-20",
+      "rowCount": 3,
+      "extendOffered": false
+    }
+  }
 }

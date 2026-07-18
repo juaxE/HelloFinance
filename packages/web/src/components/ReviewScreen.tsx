@@ -20,7 +20,8 @@ export function ReviewScreen({ detail, accounts, categories, onChange, onDone }:
   const [result, setResult] = useState<CommitResult | null>(null);
 
   const allRows = detail.groups.flatMap((g) => g.rows);
-  const beforeOpeningRows = allRows.filter((r) => r.beforeOpening);
+  const beforeOpening = detail.beforeOpening;
+  const targetAccount = accounts.find((a) => a.id === detail.accountId);
   const eligibleRows = allRows.filter((r) => !r.beforeOpening);
   const unlabeledEligible = eligibleRows.filter(
     (r) => r.chosenCategoryId === null && r.proposedCategoryId === null,
@@ -104,16 +105,25 @@ export function ReviewScreen({ detail, accounts, categories, onChange, onDone }:
           ` — already imported into ${[...duplicateAccountNames].join(', ')}`}
       </p>
 
-      {beforeOpeningRows.length > 0 && (
+      {beforeOpening.count > 0 && (
         <div className="card">
           <span className="badge warn">
-            {beforeOpeningRows.length} row{beforeOpeningRows.length === 1 ? '' : 's'} dated before
-            the account&apos;s opening balance
+            {beforeOpening.count} row{beforeOpening.count === 1 ? '' : 's'} dated before the
+            account&apos;s opening balance
           </span>{' '}
           — these will not be imported.{' '}
-          <button onClick={handleExtendHistory} disabled={busy}>
-            Extend history to include them
-          </button>
+          {beforeOpening.extendOffered ? (
+            <button onClick={handleExtendHistory} disabled={busy}>
+              Extend history to include them
+            </button>
+          ) : (
+            <span data-testid="extend-unavailable">
+              This file ends before the account&apos;s opening date
+              {targetAccount?.openingBalanceDate ? ` (${targetAccount.openingBalanceDate})` : ''}, so
+              history can&apos;t be extended automatically — enter the balance at that date manually
+              in account settings.
+            </span>
+          )}
         </div>
       )}
 

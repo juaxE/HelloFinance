@@ -221,4 +221,20 @@ describe('POST /api/imports/:id/extend-history (decision 002-E)', () => {
         .some((r: { beforeOpening: boolean }) => r.beforeOpening),
     ).toBe(false);
   });
+
+  it('409s the assist and reports extendOffered=false when the file ends before opening (AC 002-12)', async () => {
+    const gap = expected.openingBalanceBoundary.gap;
+    const accountId = await createAccount(gap.openingBalanceDate);
+    const bytes = loadFixture(gap.path);
+    const form = new FormData();
+    form.append('accountId', String(accountId));
+    form.append('file', new Blob([bytes]), 'gap.csv');
+    const detail = await fetch(`${base}/api/imports`, { method: 'POST', body: form }).then(json);
+    expect(detail.beforeOpening.extendOffered).toBe(false);
+
+    const res = await fetch(`${base}/api/imports/${detail.importId}/extend-history`, {
+      method: 'POST',
+    });
+    expect(res.status).toBe(409);
+  });
 });

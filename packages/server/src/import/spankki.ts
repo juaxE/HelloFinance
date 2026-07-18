@@ -44,10 +44,41 @@ function splitLines(text: string): string[] {
   return text.split(/\r\n|\r|\n/).filter((line) => line.length > 0);
 }
 
-/** '-' means empty for iban/bic/reference/payer/payee fields (not the message). */
+/**
+ * Split a `;`-delimited S-Pankki line, honoring the apostrophe-wrapped Viesti
+ * field: a `;` inside a `'...'`-quoted field is data, not a delimiter. Without
+ * this, a message containing `;` shifts every later column and corrupts the
+ * archive_id dedup key (non-negotiable #4). An apostrophe only opens a quote at
+ * a field boundary; the closing apostrophe is the one immediately before a `;`
+ * or end-of-line, so an in-message apostrophe (`it's`) does not close early.
+ */
+function splitCsvLine(line: string): string[] {
+  const fields: string[] = [];
+  let start = 0;
+  let inQuote = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === "'" && !inQuote && i === start) {
+      inQuote = true;
+    } else if (ch === "'" && inQuote && (i + 1 >= line.length || line[i + 1] === ';')) {
+      inQuote = false;
+    } else if (ch === ';' && !inQuote) {
+      fields.push(line.slice(start, i));
+      start = i + 1;
+    }
+  }
+  fields.push(line.slice(start));
+  return fields;
+}
+
+/**
+ * '-' (and a bare empty field) mean no value for iban/reference/payer/payee and
+ * the archive id (not the message, which has its own unwrap). Empty → null so a
+ * blank archive id never collides with another on the uniqueness constraint.
+ */
 function emptyDash(raw: string): string | null {
   const trimmed = raw.trim();
-  return trimmed === '-' ? null : trimmed;
+  return trimmed === '' || trimmed === '-' ? null : trimmed;
 }
 
 /** Viesti is wrapped `'...'`; the empty case is the wrapped dash `'-'`. */
@@ -108,7 +139,8 @@ function parseRow(fields: string[], columnIndex: Record<string, number>): Parsed
     payee,
     counterparty,
     counterpartyIban: stripWhitespace(emptyDash(col('Saajan tilinumero'))),
-    counterpartyBic: stripWhitespace(emptyDash(col('Saajan BIC-tunnus'))),
+    // BIC (Saajan BIC-tunnus) is parsed past for header mapping but not
+    // extracted or stored (decision 002-F).
     reference: emptyDash(col('Viitenumero')),
     message: unwrapMessage(col('Viesti')),
     archiveId: emptyDash(col('Arkistointitunnus')),
@@ -129,7 +161,7 @@ export const sPankkiAdapter: BankAdapter = {
       throw new BankAdapterParseError('empty file');
     }
 
-    const headerFields = lines[0]!.split(';').map((f) => f.trim());
+    const headerFields = splitCsvLine(lines[0]!).map((f) => f.trim());
     for (const token of REQUIRED_HEADER_TOKENS) {
       if (!headerFields.includes(token)) {
         throw new BankAdapterParseError(
@@ -147,7 +179,18 @@ export const sPankkiAdapter: BankAdapter = {
       columnIndex[name] = idx;
     }
 
-    const rows = lines.slice(1).map((line) => parseRow(line.split(';'), columnIndex));
+    const rows = lines.slice(1).map((line, i) => {
+      const fields = splitCsvLine(line);
+      // A field-count mismatch means the row cannot be mapped by position
+      // without misplacing the archive_id dedup key — fail loud rather than
+      // silently corrupt idempotency (non-negotiable #4).
+      if (fields.length !== headerFields.length) {
+        throw new BankAdapterParseError(
+          `row ${i + 2} has ${fields.length} columns, expected ${headerFields.length}`,
+        );
+      }
+      return parseRow(fields, columnIndex);
+    });
     return { encoding, rows };
   },
 };

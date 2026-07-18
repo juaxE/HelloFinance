@@ -10,6 +10,7 @@ export function TransactionsPage() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [accountFilter, setAccountFilter] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [pendingScope, setPendingScope] = useState<{ id: number; categoryId: number } | null>(null);
 
   useEffect(() => {
@@ -37,9 +38,13 @@ export function TransactionsPage() {
 
   async function applyCategory(id: number, categoryId: number, scope: 'one_off' | 'update_rule') {
     setError(null);
+    setNotice(null);
     try {
-      await api.patchTransaction(id, { categoryId, scope });
+      const result = await api.patchTransaction(id, { categoryId, scope });
       setPendingScope(null);
+      if (result.relabeledCount > 0) {
+        setNotice(`Also relabeled ${result.relabeledCount} earlier transaction(s) from this rule.`);
+      }
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'failed to relabel');
@@ -64,6 +69,7 @@ export function TransactionsPage() {
           {error}
         </p>
       )}
+      {notice && <p role="status">{notice}</p>}
       <label>
         Account
         <select value={accountFilter} onChange={(e) => setAccountFilter(e.target.value)}>

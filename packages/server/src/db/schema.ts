@@ -124,8 +124,9 @@ export const transactions = sqliteTable(
     // Derived at import: payee when amount<0 (outgoing), payer when amount>0
     // (incoming). This is what labeling/normalization run on.
     counterparty: text('counterparty').notNull(),
+    // Retained source-only data; its sole (deferred) consumer is transfer
+    // pair-matching. Never read by import/labeling/dedup (decision 002-F).
     counterpartyIban: text('counterparty_iban'), // normalized, nullable
-    counterpartyBic: text('counterparty_bic'), // normalized, nullable
     reference: text('reference'), // Viitenumero, nullable
     message: text('message'), // Viesti, unwrapped, nullable
 
@@ -226,7 +227,6 @@ export const stagedTransactions = sqliteTable(
     counterparty: text('counterparty').notNull(),
     normalizedCounterparty: text('normalized_counterparty').notNull(),
     counterpartyIban: text('counterparty_iban'),
-    counterpartyBic: text('counterparty_bic'),
     reference: text('reference'),
     message: text('message'),
     archiveId: text('archive_id'),

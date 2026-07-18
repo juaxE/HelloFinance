@@ -10,7 +10,6 @@ CREATE TABLE `staged_transactions` (
 	`counterparty` text NOT NULL,
 	`normalized_counterparty` text NOT NULL,
 	`counterparty_iban` text,
-	`counterparty_bic` text,
 	`reference` text,
 	`message` text,
 	`archive_id` text,
@@ -30,4 +29,5 @@ CREATE TABLE `staged_transactions` (
 );
 --> statement-breakpoint
 CREATE INDEX `idx_staged_transactions_import_id` ON `staged_transactions` (`import_id`);--> statement-breakpoint
-CREATE INDEX `idx_staged_transactions_normalized` ON `staged_transactions` (`import_id`,`normalized_counterparty`);
+CREATE INDEX `idx_staged_transactions_normalized` ON `staged_transactions` (`import_id`,`normalized_counterparty`);--> statement-breakpoint
+ALTER TABLE `transactions` DROP COLUMN `counterparty_bic`;

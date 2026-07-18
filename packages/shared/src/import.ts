@@ -59,6 +59,19 @@ export const zImportCounts = z.object({
 });
 export type ImportCounts = z.infer<typeof zImportCounts>;
 
+/**
+ * Before-opening summary (decision 001-A / 002-E). `extendOffered` reflects the
+ * server-side guard: the "Extend history" assist is exact only when the file
+ * bridges the gap, so the UI offers it iff this is true.
+ */
+export const zBeforeOpeningSummary = z.object({
+  count: z.number().int(),
+  earliestDate: zIsoDate.nullable(),
+  sumNewCents: z.number().int(),
+  extendOffered: z.boolean(),
+});
+export type BeforeOpeningSummary = z.infer<typeof zBeforeOpeningSummary>;
+
 /** Response for both `POST /api/imports` and `GET /api/imports/:id`. */
 export const zImportDetail = z.object({
   importId: z.number().int(),
@@ -69,6 +82,7 @@ export const zImportDetail = z.object({
   counts: zImportCounts,
   groups: z.array(zStagedGroup),
   duplicates: z.array(zDuplicateRow),
+  beforeOpening: zBeforeOpeningSummary,
 });
 export type ImportDetail = z.infer<typeof zImportDetail>;
 

@@ -26,8 +26,8 @@
     {
       "idx": 3,
       "version": "6",
-      "when": 1784292730406,
-      "tag": "0003_staged_transactions",
+      "when": 1784332723947,
+      "tag": "0003_staged_transactions_drop_bic",
       "breakpoints": true
     }
   ]

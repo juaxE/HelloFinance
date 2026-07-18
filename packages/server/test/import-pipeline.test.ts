@@ -371,6 +371,89 @@ describe('before-opening exclusion + extend history (AC 002-10, 002-11)', () => 
   });
 });
 
+describe('extend-history recompute + guard (AC 002-11, 002-12)', () => {
+  it('counts each excluded new row once (in-batch dup not double-counted) and preserves the balance', () => {
+    const b = expected.openingBalanceBoundary.extendHistory;
+    db.update(accounts)
+      .set({
+        openingBalanceDate: b.oldOpeningBalanceDate,
+        openingBalanceCents: b.oldOpeningBalanceCents,
+      })
+      .where(eq(accounts.id, mainAccountId))
+      .run();
+
+    const bytes = loadFixture(b.path);
+    const { importId } = analyzeImport(db, {
+      accountId: mainAccountId,
+      filename: 'extend.csv',
+      bytes,
+    });
+
+    const detail = getImportDetail(db, importId);
+    // The before-opening summary is exposed, the assist is offered (file bridges
+    // the gap), and an in-batch duplicate sits in the excluded range.
+    expect(detail.beforeOpening.count).toBe(b.extendedRowCount);
+    expect(detail.beforeOpening.sumNewCents).toBe(b.excludedNewSumCents);
+    expect(detail.beforeOpening.earliestDate).toBe(b.newOpeningBalanceDate);
+    expect(detail.beforeOpening.extendOffered).toBe(true);
+    expect(detail.duplicates.some((d) => d.dupState === 'duplicate_in_batch')).toBe(true);
+
+    const ext = extendHistory(db, importId);
+    expect(ext.openingBalanceDate).toBe(b.newOpeningBalanceDate);
+    expect(ext.openingBalanceCents).toBe(b.newOpeningBalanceCents); // duplicate NOT double-counted
+    expect(ext.extendedRowCount).toBe(b.extendedRowCount);
+
+    commitImport(db, importId, { allowUncategorized: true });
+    const account = db.select().from(accounts).where(eq(accounts.id, mainAccountId)).get()!;
+    const allTx = db.select().from(transactions).all();
+    const balanceViaNew =
+      account.openingBalanceCents +
+      allTx
+        .filter((t) => t.paymentDate >= account.openingBalanceDate!)
+        .reduce((s, t) => s + t.amountCents, 0);
+    const balanceViaOld =
+      b.oldOpeningBalanceCents +
+      allTx
+        .filter((t) => t.paymentDate >= b.oldOpeningBalanceDate)
+        .reduce((s, t) => s + t.amountCents, 0);
+    expect(balanceViaNew).toBe(b.preservedBalanceCents);
+    expect(balanceViaOld).toBe(b.preservedBalanceCents); // cent-for-cent, before == after
+  });
+
+  it('does not offer the assist and 409s when the file ends before the opening date', () => {
+    const g = expected.openingBalanceBoundary.gap;
+    db.update(accounts)
+      .set({ openingBalanceDate: g.openingBalanceDate, openingBalanceCents: 500000 })
+      .where(eq(accounts.id, mainAccountId))
+      .run();
+    const before = db.select().from(accounts).where(eq(accounts.id, mainAccountId)).get()!;
+
+    const bytes = loadFixture(g.path);
+    const { importId } = analyzeImport(db, {
+      accountId: mainAccountId,
+      filename: 'gap.csv',
+      bytes,
+    });
+
+    const detail = getImportDetail(db, importId);
+    expect(detail.beforeOpening.count).toBe(g.rowCount); // all rows before opening
+    expect(detail.beforeOpening.extendOffered).toBe(false); // partial history → guard blocks
+
+    try {
+      extendHistory(db, importId);
+      throw new Error('expected extendHistory to throw');
+    } catch (e) {
+      expect(e).toBeInstanceOf(ImportPipelineError);
+      expect((e as ImportPipelineError).statusCode).toBe(409);
+    }
+
+    // The opening balance is untouched.
+    const after = db.select().from(accounts).where(eq(accounts.id, mainAccountId)).get()!;
+    expect(after.openingBalanceDate).toBe(before.openingBalanceDate);
+    expect(after.openingBalanceCents).toBe(before.openingBalanceCents);
+  });
+});
+
 describe('uncategorized commit gate (decision 002-C)', () => {
   it('requires allowUncategorized when a new row is still unlabeled', () => {
     const bytes = loadFixture(expected.files.main.path);

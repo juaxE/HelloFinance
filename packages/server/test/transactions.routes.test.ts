@@ -68,7 +68,11 @@ describe('PATCH /api/transactions/:id (relabel/annotate)', () => {
       payload: { categoryId: groceriesId, scope: 'one_off' },
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toMatchObject({ categoryId: groceriesId, categorySource: 'manual' });
+    expect(res.json().transaction).toMatchObject({
+      categoryId: groceriesId,
+      categorySource: 'manual',
+    });
+    expect(res.json().relabeledCount).toBe(0);
     expect(db.select().from(labelingRules).all()).toHaveLength(0);
   });
 
@@ -117,6 +121,73 @@ describe('PATCH /api/transactions/:id (relabel/annotate)', () => {
     expect(rules[0]!.categoryId).toBe(otherId);
   });
 
+  it('update_rule retroactively relabels only rule-sourced siblings and reports the count (AC 002-13)', async () => {
+    // Six committed rows: four share normalized 'K-MARKET' with mixed sources,
+    // one is a different counterparty that also has a rule, one is uncategorized.
+    const ruleA = insertTransaction({
+      archiveId: 'r1',
+      contentHash: 'r1',
+      counterparty: 'K-Market Kamppi',
+      categoryId: groceriesId,
+      categorySource: 'rule',
+    });
+    const ruleB = insertTransaction({
+      archiveId: 'r2',
+      contentHash: 'r2',
+      counterparty: 'K-Market Töölö',
+      categoryId: groceriesId,
+      categorySource: 'rule',
+    });
+    const manual = insertTransaction({
+      archiveId: 'm1',
+      contentHash: 'm1',
+      counterparty: 'K-Market Sörnäinen',
+      categoryId: groceriesId,
+      categorySource: 'manual',
+    });
+    const typeHint = insertTransaction({
+      archiveId: 't1',
+      contentHash: 't1',
+      counterparty: 'K-Market Pasila',
+      categoryId: groceriesId,
+      categorySource: 'type_hint',
+    });
+    const uncategorized = insertTransaction({
+      archiveId: 'u1',
+      contentHash: 'u1',
+      counterparty: 'K-Market Malmi',
+    });
+    const otherCounterparty = insertTransaction({
+      archiveId: 'x1',
+      contentHash: 'x1',
+      counterparty: 'Lidl Helsinki',
+      categoryId: groceriesId,
+      categorySource: 'rule',
+    });
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/api/transactions/${ruleA.id}`,
+      payload: { categoryId: otherId, scope: 'update_rule' },
+    });
+    expect(res.statusCode).toBe(200);
+    // The edited row is a direct user choice → manual; only the OTHER K-MARKET
+    // rule-sourced row is swept, so the reported count is 1.
+    expect(res.json().transaction).toMatchObject({ categoryId: otherId, categorySource: 'manual' });
+    expect(res.json().relabeledCount).toBe(1);
+
+    const byId = (id: number) =>
+      db.select().from(transactions).where(eq(transactions.id, id)).get()!;
+    expect(byId(ruleB.id)).toMatchObject({ categoryId: otherId, categorySource: 'rule' });
+    expect(byId(manual.id)).toMatchObject({ categoryId: groceriesId, categorySource: 'manual' });
+    expect(byId(typeHint.id)).toMatchObject({ categoryId: groceriesId, categorySource: 'type_hint' });
+    expect(byId(uncategorized.id)).toMatchObject({ categoryId: null, categorySource: null });
+    expect(byId(otherCounterparty.id)).toMatchObject({
+      categoryId: groceriesId,
+      categorySource: 'rule',
+    });
+  });
+
   it('a note-only edit needs no scope and never touches rules', async () => {
     const txn = insertTransaction({ archiveId: 'A1', contentHash: 'h1' });
     const res = await app.inject({
@@ -125,8 +196,9 @@ describe('PATCH /api/transactions/:id (relabel/annotate)', () => {
       payload: { note: 'lunch with a friend' },
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json().note).toBe('lunch with a friend');
-    expect(res.json().categoryId).toBeNull();
+    expect(res.json().transaction.note).toBe('lunch with a friend');
+    expect(res.json().transaction.categoryId).toBeNull();
+    expect(res.json().relabeledCount).toBe(0);
     expect(db.select().from(labelingRules).all()).toHaveLength(0);
   });
 

@@ -11,8 +11,7 @@ export interface ParsedTransaction {
   payer: string | null; // Maksaja
   payee: string | null; // Saajan nimi
   counterparty: string; // payee if amountCents<0 else payer (raw, pre-normalization)
-  counterpartyIban: string | null; // spaces stripped
-  counterpartyBic: string | null; // spaces stripped
+  counterpartyIban: string | null; // spaces stripped; source-only (decision 002-F)
   reference: string | null; // Viitenumero
   message: string | null; // Viesti, unwrapped
   archiveId: string | null; // Arkistointitunnus (null only for future banks)

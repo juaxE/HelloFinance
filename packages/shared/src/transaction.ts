@@ -21,7 +21,6 @@ export const zTransaction = z.object({
   payee: z.string().nullable(),
   counterparty: z.string(),
   counterpartyIban: z.string().nullable(),
-  counterpartyBic: z.string().nullable(),
   reference: z.string().nullable(),
   message: z.string().nullable(),
   archiveId: z.string().nullable(),
@@ -54,3 +53,15 @@ export const zTransactionPatch = z
     path: ['scope'],
   });
 export type TransactionPatch = z.infer<typeof zTransactionPatch>;
+
+/**
+ * Result of a relabel/annotate. `relabeledCount` is how many *other* committed
+ * transactions were retroactively relabeled by an `update_rule` scope (rows
+ * sharing this normalized counterparty with `category_source='rule'`); 0 for
+ * `one_off`, note-only edits, or when nothing else matched.
+ */
+export const zTransactionPatchResult = z.object({
+  transaction: zTransaction,
+  relabeledCount: z.number().int(),
+});
+export type TransactionPatchResult = z.infer<typeof zTransactionPatchResult>;

@@ -164,7 +164,6 @@ export function analyzeImport(db: Db, params: AnalyzeParams): { importId: number
       counterparty: row.counterparty,
       normalizedCounterparty,
       counterpartyIban: row.counterpartyIban,
-      counterpartyBic: row.counterpartyBic,
       reference: row.reference,
       message: row.message,
       archiveId: row.archiveId,
@@ -232,6 +231,21 @@ export interface DuplicateRow {
   duplicateAccountId: number | null;
 }
 
+/**
+ * Rows dated before the account's opening balance are excluded from commit
+ * (decision 001-A). This summary drives the review banner and the 002-E assist.
+ */
+export interface BeforeOpeningSummary {
+  count: number; // before-opening 'new' rows (the ones held back at commit)
+  earliestDate: string | null;
+  sumNewCents: number; // Σ amount_cents of those rows (== the 002-E recompute delta)
+  // The 002-E "Extend history" assist is exact only when the file bridges the
+  // gap — its latest row reaches at least the current opening date. Otherwise
+  // the excluded rows are a partial history and the recompute would corrupt the
+  // opening balance, so the assist is not offered (manual entry is the fallback).
+  extendOffered: boolean;
+}
+
 export interface ImportDetail {
   importId: number;
   status: ImportRow['status'];
@@ -241,6 +255,33 @@ export interface ImportDetail {
   counts: { total: number; new: number; duplicates: number };
   groups: StagedGroup[];
   duplicates: DuplicateRow[];
+  beforeOpening: BeforeOpeningSummary;
+}
+
+/** Pure over staged rows + the account's opening date; used by detail + extend. */
+function computeBeforeOpening(
+  staged: StagedRow[],
+  openingBalanceDate: string | null,
+): BeforeOpeningSummary {
+  const excludedNew = staged.filter((r) => r.dupState === 'new' && r.beforeOpening);
+  if (excludedNew.length === 0 || openingBalanceDate === null) {
+    return { count: 0, earliestDate: null, sumNewCents: 0, extendOffered: false };
+  }
+  const earliestDate = excludedNew.reduce(
+    (min, r) => (r.paymentDate < min ? r.paymentDate : min),
+    excludedNew[0]!.paymentDate,
+  );
+  const sumNewCents = excludedNew.reduce((sum, r) => sum + r.amountCents, 0);
+  const maxPaymentDate = staged.reduce(
+    (max, r) => (r.paymentDate > max ? r.paymentDate : max),
+    staged[0]!.paymentDate,
+  );
+  return {
+    count: excludedNew.length,
+    earliestDate,
+    sumNewCents,
+    extendOffered: maxPaymentDate >= openingBalanceDate,
+  };
 }
 
 export function getImportDetail(db: Db, importId: number): ImportDetail {
@@ -248,6 +289,7 @@ export function getImportDetail(db: Db, importId: number): ImportDetail {
   if (!importRow) {
     throw new ImportPipelineError('import not found', 404);
   }
+  const [account] = db.select().from(accounts).where(eq(accounts.id, importRow.accountId)).all();
 
   const staged = db
     .select()
@@ -317,6 +359,7 @@ export function getImportDetail(db: Db, importId: number): ImportDetail {
     },
     groups,
     duplicates,
+    beforeOpening: computeBeforeOpening(staged, account?.openingBalanceDate ?? null),
   };
 }
 
@@ -448,7 +491,6 @@ export function commitImport(
           payee: row.payee,
           counterparty: row.counterparty,
           counterpartyIban: row.counterpartyIban,
-          counterpartyBic: row.counterpartyBic,
           reference: row.reference,
           message: row.message,
           archiveId: row.archiveId,
@@ -539,35 +581,44 @@ export interface ExtendHistoryResult {
  * earliest excluded row and recomputes opening_balance_cents so recent
  * balances are unchanged (decision 002-E), then re-analyzes the staged rows
  * in place so they fall in-window.
+ *
+ * Enforced server-side: the recompute is exact only when the file bridges the
+ * gap (its latest row reaches at least the current opening date). If it does
+ * not, the excluded rows are a partial history and the recompute would corrupt
+ * the opening balance, so this rejects with 409 (UI hiding the button is not
+ * the protection — spec 002 §API surface).
  */
 export function extendHistory(db: Db, importId: number): ExtendHistoryResult {
   assertPendingReview(db, importId);
 
-  const excluded = db
+  const staged = db
     .select()
     .from(stagedTransactions)
-    .where(
-      and(
-        eq(stagedTransactions.importId, importId),
-        eq(stagedTransactions.dupState, 'new'),
-        eq(stagedTransactions.beforeOpening, true),
-      ),
-    )
+    .where(eq(stagedTransactions.importId, importId))
     .all();
-
-  if (excluded.length === 0) {
-    throw new ImportPipelineError('no before-opening rows to extend', 400);
-  }
 
   const [importRow] = db.select().from(imports).where(eq(imports.id, importId)).all();
   const [account] = db.select().from(accounts).where(eq(accounts.id, importRow!.accountId)).all();
 
-  const earliestDate = excluded.reduce(
-    (min, r) => (r.paymentDate < min ? r.paymentDate : min),
-    excluded[0]!.paymentDate,
-  );
-  const excludedSum = excluded.reduce((sum, r) => sum + r.amountCents, 0);
-  const newOpeningCents = account!.openingBalanceCents - excludedSum;
+  const summary = computeBeforeOpening(staged, account!.openingBalanceDate);
+  if (summary.count === 0) {
+    throw new ImportPipelineError('no before-opening rows to extend', 400);
+  }
+  if (!summary.extendOffered) {
+    const maxPaymentDate = staged.reduce(
+      (max, r) => (r.paymentDate > max ? r.paymentDate : max),
+      staged[0]!.paymentDate,
+    );
+    throw new ImportPipelineError(
+      `this file ends ${maxPaymentDate}, before the account's opening date ` +
+        `${account!.openingBalanceDate} — extend history is not available; enter the ` +
+        `balance at ${account!.openingBalanceDate} manually`,
+      409,
+    );
+  }
+
+  const earliestDate = summary.earliestDate!;
+  const newOpeningCents = account!.openingBalanceCents - summary.sumNewCents;
 
   db.transaction((tx) => {
     tx.update(accounts)
@@ -596,6 +647,6 @@ export function extendHistory(db: Db, importId: number): ExtendHistoryResult {
   return {
     openingBalanceDate: earliestDate,
     openingBalanceCents: newOpeningCents,
-    extendedRowCount: excluded.length,
+    extendedRowCount: summary.count,
   };
 }
