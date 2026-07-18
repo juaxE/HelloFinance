@@ -13,6 +13,9 @@
  *    (allowUncategorized) — a year of real-looking committed history.
  *  - Two labeling rules, so the Rules screen and "from rule" badges have
  *    something to show.
+ *  - Recurring templates, and the assets + monthly snapshots the dashboard's
+ *    net-worth trend reads (spec 004). Both live in `seed-data.ts` so tests can
+ *    build the same state in memory.
  *  - The overlap fixture, imported but left `pending_review` into Main — a
  *    live review screen (28 duplicates, 14 new groups) for manual QA and the
  *    Playwright review-screen spec (AC 002-12), without scripting a browser
@@ -21,18 +24,15 @@
 import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { eq } from 'drizzle-orm';
 import { DATABASE_PATH } from '../config';
 import { createDb } from '../db/client';
 import { runMigrations } from '../db/migrate';
-import { accounts, categories, labelingRules, recurringTemplates } from '../db/schema';
+import { accounts } from '../db/schema';
 import { analyzeImport, commitImport } from '../import/pipeline';
+import { FIXTURE_EXPECTATIONS as expected, seedAssets, seedRule, seedTemplates } from './seed-data';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURES_ROOT = resolve(HERE, '../../../../fixtures');
-const expected = JSON.parse(readFileSync(resolve(FIXTURES_ROOT, 'expected.json'), 'utf-8')) as {
-  files: Record<string, { path: string }>;
-};
 
 function resetDatabaseFile(path: string): void {
   for (const suffix of ['', '-wal', '-shm']) {
@@ -86,6 +86,7 @@ function main(): void {
   seedRule(db, 'NETFLIX.COM', 'Subscriptions', 'NETFLIX.COM');
 
   seedTemplates(db);
+  seedAssets(db);
 
   const overlapBytes = loadFixture(expected.files.overlap!.path);
   const overlapImport = analyzeImport(db, {
@@ -101,51 +102,10 @@ function main(): void {
       `  Buffer account #${bufferAccount.id}: ${bufferCommit.inserted} committed (${bufferCommit.uncategorized} uncategorized)`,
       `  2 labeling rules seeded (K-MARKET -> Groceries, NETFLIX.COM -> Subscriptions)`,
       `  5 recurring templates seeded (monthly/quarterly/yearly bills; no envelopes — those are the owner's to set)`,
+      `  ${expected.assets.seeded.length} assets seeded with monthly snapshots (each skipping one month, for carry-forward)`,
       `  Pending review import #${overlapImport.importId} on Main (overlap file: 28 duplicates, 14 new groups expected)`,
     ].join('\n'),
   );
-}
-
-/**
- * Recurring templates matched to counterparties the fixtures actually charge,
- * across all three cadences, so the Budgets screen has a real bill plan to
- * reconcile (spec 003). Envelopes are deliberately NOT seeded: an envelope must
- * exist only because the owner set it, or the "did I budget this month?" signal
- * would be a lie (decision 003-K).
- */
-function seedTemplates(db: ReturnType<typeof createDb>): void {
-  const templates = [
-    // name, category, cents/occurrence, interval, day, start, match key
-    ['Rent', 'Housing', 118000, 1, 5, '2025-07', 'ASUNTO OY HELSINGIN ESIMERKKI'],
-    ['Gym', 'Health', 4990, 1, 3, '2025-07', 'ELIXIA HELSINKI'],
-    ['Netflix', 'Subscriptions', 1799, 1, 12, '2025-07', 'NETFLIX.COM'],
-    ['Self storage', 'Other', 8700, 3, 20, '2025-07', 'PELICAN SELF STORAGE'],
-    ['Home insurance', 'Other', 60000, 12, 15, '2025-10', 'LÄHITAPIOLA'],
-  ] as const;
-
-  for (const [name, categoryName, amountCents, intervalMonths, day, startMonth, key] of templates) {
-    const category = db.select().from(categories).where(eq(categories.name, categoryName)).get();
-    if (!category) throw new Error(`category "${categoryName}" not found`);
-    db.insert(recurringTemplates)
-      .values({
-        name,
-        categoryId: category.id,
-        amountCents,
-        intervalMonths,
-        expectedDayOfMonth: day,
-        startMonth,
-        matchNormalizedCounterparty: key,
-      })
-      .run();
-  }
-}
-
-function seedRule(db: ReturnType<typeof createDb>, normalized: string, categoryName: string, exampleRaw: string): void {
-  const category = db.select().from(categories).where(eq(categories.name, categoryName)).get();
-  if (!category) throw new Error(`category "${categoryName}" not found`);
-  db.insert(labelingRules)
-    .values({ normalizedCounterparty: normalized, categoryId: category.id, exampleRaw })
-    .run();
 }
 
 main();

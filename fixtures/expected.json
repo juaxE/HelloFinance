@@ -267,6 +267,158 @@
     "monthExpenseCentsWithRow": 129330,
     "monthExpenseCentsWithoutRow": 130342
   },
+  "assets": {
+    "seeded": [
+      {
+        "name": "Index fund",
+        "kind": "investment",
+        "gapMonth": "2025-09",
+        "snapshots": {
+          "2025-07": 1200000,
+          "2025-08": 1245000,
+          "2025-10": 1310000,
+          "2025-11": 1288000,
+          "2025-12": 1350000,
+          "2026-01": 1402000,
+          "2026-02": 1375000,
+          "2026-03": 1430000,
+          "2026-04": 1465000,
+          "2026-05": 1510000,
+          "2026-06": 1555000
+        }
+      },
+      {
+        "name": "Car loan",
+        "kind": "loan",
+        "gapMonth": "2026-02",
+        "snapshots": {
+          "2025-07": 1800000,
+          "2025-08": 1755000,
+          "2025-09": 1710000,
+          "2025-10": 1665000,
+          "2025-11": 1620000,
+          "2025-12": 1575000,
+          "2026-01": 1530000,
+          "2026-03": 1440000,
+          "2026-04": 1395000,
+          "2026-05": 1350000,
+          "2026-06": 1305000
+        }
+      }
+    ],
+    "openingBalanceDate": "2025-07-01"
+  },
+  "netWorth": {
+    "byMonth": {
+      "2025-07": {
+        "accountsCents": 168600,
+        "investmentsCents": 1200000,
+        "loansCents": 1800000,
+        "netWorthCents": -431400
+      },
+      "2025-08": {
+        "accountsCents": 333089,
+        "investmentsCents": 1245000,
+        "loansCents": 1755000,
+        "netWorthCents": -176911
+      },
+      "2025-09": {
+        "accountsCents": 503659,
+        "investmentsCents": 1245000,
+        "loansCents": 1710000,
+        "netWorthCents": 38659
+      },
+      "2025-10": {
+        "accountsCents": 594129,
+        "investmentsCents": 1310000,
+        "loansCents": 1665000,
+        "netWorthCents": 239129
+      },
+      "2025-11": {
+        "accountsCents": 746483,
+        "investmentsCents": 1288000,
+        "loansCents": 1620000,
+        "netWorthCents": 414483
+      },
+      "2025-12": {
+        "accountsCents": 907932,
+        "investmentsCents": 1350000,
+        "loansCents": 1575000,
+        "netWorthCents": 682932
+      },
+      "2026-01": {
+        "accountsCents": 1060975,
+        "investmentsCents": 1402000,
+        "loansCents": 1530000,
+        "netWorthCents": 932975
+      },
+      "2026-02": {
+        "accountsCents": 1230705,
+        "investmentsCents": 1375000,
+        "loansCents": 1530000,
+        "netWorthCents": 1075705
+      },
+      "2026-03": {
+        "accountsCents": 1380910,
+        "investmentsCents": 1430000,
+        "loansCents": 1440000,
+        "netWorthCents": 1370910
+      },
+      "2026-04": {
+        "accountsCents": 1538700,
+        "investmentsCents": 1465000,
+        "loansCents": 1395000,
+        "netWorthCents": 1608700
+      },
+      "2026-05": {
+        "accountsCents": 1693491,
+        "investmentsCents": 1510000,
+        "loansCents": 1350000,
+        "netWorthCents": 1853491
+      },
+      "2026-06": {
+        "accountsCents": 1851320,
+        "investmentsCents": 1555000,
+        "loansCents": 1305000,
+        "netWorthCents": 2101320
+      }
+    }
+  },
+  "recurringCommitments": {
+    "normalizedMonthlyCents": 132689,
+    "byTemplate": [
+      {
+        "name": "Rent",
+        "amountCents": 118000,
+        "intervalMonths": 1,
+        "monthlyEquivalentCents": 118000
+      },
+      {
+        "name": "Gym",
+        "amountCents": 4990,
+        "intervalMonths": 1,
+        "monthlyEquivalentCents": 4990
+      },
+      {
+        "name": "Netflix",
+        "amountCents": 1799,
+        "intervalMonths": 1,
+        "monthlyEquivalentCents": 1799
+      },
+      {
+        "name": "Self storage",
+        "amountCents": 8700,
+        "intervalMonths": 3,
+        "monthlyEquivalentCents": 2900
+      },
+      {
+        "name": "Home insurance",
+        "amountCents": 60000,
+        "intervalMonths": 12,
+        "monthlyEquivalentCents": 5000
+      }
+    ]
+  },
   "normalizationExamples": [
     {
       "raw": "PAYPAL *SPOTIFY*P41B7F3E9",
