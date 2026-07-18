@@ -519,6 +519,45 @@ function incomeSources(rows) {
   return { byMonth, totalSalaryCents: salary, totalOtherInflowCents: other };
 }
 
+// --- Needs-review / M-definition expectations (spec 003 criterion 11) -------
+//
+// Spec 003's reconciliation set **M** (decision 003-F) is category-driven, not
+// sign-driven like `cashFlow` above: it excludes the Transfer category and every
+// income-source category, and INCLUDES uncategorized rows. On a fresh import the
+// only categories assigned are the two type hints (PALKKA -> Income,
+// OMA TILISIIRTO -> Transfer), so M is every other main-account row and the
+// expense total nets incoming paybacks DOWN.
+//
+// The subject row is an incoming VIPPS MOBILEPAY payback: uncategorized on
+// import, it surfaces in "Needs review" with a POSITIVE amount. Criterion 11b
+// then labels it Transfer/income, which legitimately removes it from M — hence
+// both expense totals, with and without the row.
+function mDefinitionExpense(rows, month, { excludeArchiveId = null } = {}) {
+  return rows
+    .filter((r) => r._month === month)
+    .filter((r) => r.type !== 'PALKKA' && r.type !== 'OMA TILISIIRTO')
+    .filter((r) => r.archiveId !== excludeArchiveId)
+    .reduce((sum, r) => sum - r.amountCents, 0);
+}
+
+function needsReviewCase(rows, month) {
+  const row = rows.find(
+    (r) => r._month === month && normalize(r._counterparty ?? '') === 'VIPPS MOBILEPAY AS,',
+  );
+  if (!row) throw new Error(`no VIPPS payback row in ${month}`);
+  return {
+    month,
+    archiveId: row.archiveId,
+    counterparty: row._counterparty,
+    normalizedCounterparty: normalize(row._counterparty),
+    amountCents: row.amountCents, // signed, positive — it is a payback
+    monthExpenseCentsWithRow: mDefinitionExpense(rows, month),
+    monthExpenseCentsWithoutRow: mDefinitionExpense(rows, month, {
+      excludeArchiveId: row.archiveId,
+    }),
+  };
+}
+
 // Non-monthly recurring charges (spec 003 cadence). Summarizes the seeded
 // quarterly/yearly charges by their normalized counterparty so cadence tests can
 // assert occurrence months, per-occurrence amount, and interval without hard-coding.
@@ -606,6 +645,11 @@ const expected = {
       return { ...s, nominalDueMonth: '2026-02', actualMonth: s.months[0] ?? null };
     })(),
   },
+  // Spec 003 criterion 11: an uncategorized row surfacing in "Needs review"
+  // with a signed amount, plus the M-definition expense totals with and without
+  // it, so the tie-out can be asserted across a relabel. Main account only —
+  // the tie-out test imports the main fixture alone.
+  needsReview: needsReviewCase(mainRows, '2026-04'),
   normalizationExamples: NORMALIZATION_SAMPLES.map((raw) => ({ raw, normalized: normalize(raw) })),
   // Opening-balance boundary (decision 002-E). All amounts are exact and
   // independent of the PRNG so the recompute can be asserted cent-for-cent.
