@@ -49,14 +49,37 @@ Definitions:
   Salary vs Other income; reimbursements surface as negative offsets within the
   category breakdown.
 - **Per-category expense** (a month) = per expense category, −Σ of amounts, a
-  positive magnitude.
+  positive magnitude, attributed by the **transaction's own** category (see the
+  divergence note below).
 - **Account balance at date D** = `opening_balance_cents` +
   Σ `amount_cents` for that account with
   `opening_balance_date ≤ payment_date ≤ D` (the lower bound is dropped when
   `opening_balance_date` is null). This is the pinned opening-balance boundary from
   decision 001-A — it is what stops back-filled history from double-counting, and
   the net-worth formula below inherits it through this definition.
-- **Net worth at month M** (end of month) — see formula below.
+- **Net worth at month M** (end of month) — see the net-worth formula below.
+
+### Per-category attribution diverges from spec 003 — by design (003-M)
+
+This spec's category breakdown attributes every transaction to **its own
+category**: the dashboard answers "_where did the money go_". Spec 003's month
+view attributes a named budget line's matched amount to the **line's** category
+(decision 003-G): it answers "_how did my plan do_". The two therefore disagree
+per category after a relabel. Concretely: a `SPOTIFY`-keyed named line sits in
+Subscriptions and the Spotify transaction is relabeled to Entertainment — 004's
+breakdown moves that amount to **Entertainment**, while 003's per-category
+decomposition still reports it under **Subscriptions** (the line consumed it, and
+the line's category wins there). Both sides' **month totals are unchanged and
+equal**, which is exactly what criteria 2, 5 and 7 assert.
+
+A per-category difference between this dashboard and the Budgets month view is
+**not** a CLAUDE.md §6 tie-out violation and must not be "reconciled" by making
+either side adopt the other's attribution. In particular, 004 must not inherit
+003's line-attribution: that would make the dashboard's spending chart change
+whenever a budget line is added, deleted or re-categorized — reporting mutated by
+planning configuration. §6 binds the **totals**, not the per-category split.
+
+### Net worth, snapshots and archiving
 
 ```text
 netWorth(M) =  Σ account_balance(account, monthEnd(M))   over all accounts (incl. the buffer / emergency fund)
@@ -69,15 +92,52 @@ account term — it is not a separate asset (decision 001-D). Snapshots are carr
 forward: the latest one with `month ≤ M` (decision 004-B) — so a month with no new
 snapshot reuses the last entered value instead of dropping to zero.
 
-- **Normalized monthly commitments** (read-only planning indicator, decision
-  003-E) = Σ over recurring templates active this month of
-  `round(amount_cents / interval_months)`. It smooths non-monthly bills into a
-  monthly-equivalent figure — a 600 €/yr insurance counts as ~50 €/mo, an 87 €/qtr
-  storage fee as 29 €/mo — so the reader sees their true ongoing commitment without
-  the calendar spikes. It is **display only**: it never enters budgets,
-  reconciliation, or net worth (those use real transactions), so per-template
-  rounding to whole cents is harmless. "Active this month" =
-  `start_month ≤ current ≤ end_month` (end open ⇒ ongoing).
+**Archiving an asset never rewrites net-worth history (decision 004-F).**
+`assets.archived_at` removes the asset from the **snapshot-entry form only**. Its
+existing snapshots keep carrying forward into every month `≥` their own, exactly
+as before — net worth in a past month must never change because of an action taken
+today. Ending an asset's contribution is therefore a **data** step, not an archive
+step: enter a **final snapshot** first, then archive. For a paid-off loan that
+final snapshot is `0` in the month it was settled; for a liquidated investment it
+is `0` in the same month the proceeds land in a bank account, so the account term
+picks up what the asset term drops and the trend stays continuous. An archived
+asset whose last snapshot is non-zero **keeps contributing** — a "phantom loan" is
+a faithful report of the data that was entered, and the fix is to enter the
+closing snapshot, never to filter archived assets out of the net-worth query.
+
+### Months before an account existed (004-E)
+
+The balance formula's window is empty for a `monthEnd(M)` earlier than an
+account's `opening_balance_date`, which would otherwise return the bare
+`opening_balance_cents` and paint a flat, plausible-looking, wrong line backwards
+in time. Two rules:
+
+- An account contributes **0**, not its opening balance, to any month whose
+  `monthEnd(M) < opening_balance_date`. An account with a null
+  `opening_balance_date` has no lower bound and contributes for every month.
+- Trend endpoints **clamp** their start to the month containing the **earliest**
+  `opening_balance_date` across accounts (no clamp if every account's is null).
+  A requested `window` or `from` reaching further back simply returns fewer
+  points — a 12-month window on young data shows the months that exist.
+
+Months inside the window in which some account is not yet open are flagged
+`partialAccounts: true` in the response, and the chart marks that segment (the
+step up when a second account starts being tracked is real, and must not read as
+a windfall).
+
+### Normalized monthly commitments (003-E)
+
+**Normalized monthly commitments** (read-only planning indicator) = Σ over
+recurring templates active this month of `round(amount_cents / interval_months)`.
+It smooths non-monthly bills into a monthly-equivalent figure — a 600 €/yr
+insurance counts as ~50 €/mo, an 87 €/qtr storage fee as 29 €/mo — so the reader
+sees their true ongoing commitment without the calendar spikes. It is **display
+only**: it never enters budgets, reconciliation, or net worth (those use real
+transactions), so per-template rounding to whole cents is harmless. `round` is
+**half-up, away from zero**, on the cent, applied **per template** before summing
+(not to the sum) — pinned so the figure is reproducible rather than whatever the
+implementation's default happens to be. "Active this month" =
+`start_month ≤ current ≤ end_month` (end open ⇒ ongoing).
 
 ## API surface
 
@@ -106,11 +166,21 @@ intervalMonths, monthlyEquivalentCents }] }` — the read-only normalized monthl
 Asset management + snapshot entry:
 
 - `GET /api/assets`, `POST /api/assets` `{ name, kind }`,
-  `PATCH /api/assets/:id` (rename/archive).
-- `GET /api/asset-snapshots?month=YYYY-MM` → current values for that month
-  (with carry-forward indicator).
+  `PATCH /api/assets/:id` (rename/archive). Archiving sets `archived_at`; it does
+  **not** touch snapshots and does not change any past or future net-worth figure
+  (decision 004-F).
+- `GET /api/asset-snapshots?month=YYYY-MM` → current values for that month (with
+  carry-forward indicator). Returns **non-archived** assets only — this is the
+  entry form's source. The net-worth endpoint ignores `archived_at` entirely.
 - `PUT /api/asset-snapshots` `{ month, values: [{ assetId, valueCents }] }` →
-  upsert the month's snapshot per asset (unique on `(asset_id, month)`).
+  upsert the month's snapshot per listed asset (unique on `(asset_id, month)`).
+  **Partial-upsert semantics, same as `PUT …/envelopes` in 003**: creates or
+  updates a snapshot per listed asset; **assets omitted from the array are left
+  untouched** (a partial save can never silently wipe or zero a snapshot the
+  screen didn't render). There is no delete-by-omission — clearing an asset's
+  contribution is an explicit `valueCents: 0`, which is a real snapshot and
+  carries forward like any other. Rejects an **archived** asset (`400`): enter the
+  final snapshot before archiving.
 
 ## UI sketch
 
@@ -119,6 +189,9 @@ A single dashboard route, responsive card grid (Recharts for charts):
 - **Net worth trend** (line/area): total net worth, with a breakdown toggle
   (accounts / investments / −loans; the buffer/emergency fund is part of accounts)
   and a window selector **3 / 6 / 9 / 12 months** (default 12). Reads `/net-worth`.
+  A window reaching before the earliest account opening date renders fewer points,
+  not padded ones (decision 004-E); months flagged `partialAccounts` are marked so
+  the step where a second account starts being tracked doesn't read as a windfall.
 - **Cash flow** (grouped bars per month: income vs. expenses; a net line): same
   window selector; transfers excluded; reads `/cash-flow`.
 - **Income sources** (current month): salary vs other income split (and
@@ -136,7 +209,10 @@ A single dashboard route, responsive card grid (Recharts for charts):
 - **Asset snapshot entry**: a small form/modal listing each asset with the current
   month's value pre-filled (carried forward if not yet entered); Save `PUT`s the
   month's snapshot. Loans are entered as positive balances and shown subtracted in
-  net worth.
+  net worth. Archived assets are **not listed** (decision 004-F); the archive
+  action warns that a non-zero last value keeps carrying forward and offers to
+  enter a closing `0` first — which is the intended way to retire a paid-off loan
+  or a liquidated investment.
 
 The "current month" cards (income sources, category breakdown, budget vs. actual)
 show the current, still-partial month labeled **"month to date"** (decision
@@ -163,13 +239,40 @@ Assert against `fixtures/expected.json` (CLAUDE.md validation §5, §6):
    snapshot per asset.
 5. Budget-vs-actual totals equal spec 003's reconciliation for the same month.
 6. Normalized monthly commitments = Σ `round(amount_cents / interval_months)` over
-   templates active in the month (e.g. a 600 €/yr + an 87 €/qtr + a 1000 €/mo
-   template → 5000 + 2900 + 100000 = 107900 cents). The figure is the same in every
-   month regardless of which charge is due, and it does not affect the cash-flow or
-   budget totals.
-7. **UI ↔ API tie-out**: the numbers rendered on the dashboard (read from the
-   Playwright DOM) equal the API responses for the same seed — asserted, not eyeballed.
-8. Playwright screenshot of the dashboard with seeded data visible in every card.
+   templates active in the month, rounding **half-up per template**: a 600 €/yr +
+   an 87 €/qtr + a 1000 €/mo + a **1000 €/yr** template → 5000 + 2900 + 100000 +
+   **8333** = 116233 cents. The 1000 €/yr template is non-divisible
+   (100000 / 12 = 8333.33…) and pins truncation-vs-rounding; a template landing
+   exactly on half a cent rounds **away from zero** (12,33 € every 2 months →
+   1233 / 2 = 616.5 → **617**). The figure is the same in every month regardless
+   of which charge is due, and it does not affect the cash-flow or budget totals.
+7. **003-M divergence holds, and the totals still tie out.** With a `SPOTIFY`-keyed
+   named line in **Subscriptions** consuming a Spotify transaction, relabel that
+   transaction to **Entertainment**, then re-read both views for the month:
+   - 004's `/dashboard/categories` moves the amount from Subscriptions to
+     Entertainment (transaction-category attribution);
+   - 003's per-category decomposition still reports it under Subscriptions (the
+     line's category);
+   - **both sides' month expense totals are unchanged by the relabel and equal to
+     each other.**
+   This is the test that pins the ruling: a diff in the per-category split with
+   matching totals is the specified behavior, not a §6 finding.
+8. **Archived asset keeps contributing.** Archive an asset whose last snapshot is
+   non-zero → net worth for every month, past and future, is **byte-identical** to
+   before the archive; the asset disappears from `GET /api/asset-snapshots` and
+   `PUT` on it returns `400`. Then the intended flow: enter a final `0` snapshot
+   for a loan in month M **before** archiving → net worth rises by the loan
+   balance from M onward and **months before M are unchanged**.
+9. **Pre-opening months.** For an account with `opening_balance_date` in month K:
+   a trend request whose window reaches before K returns no points before the
+   earliest opening date across accounts (clamped), and for any returned month
+   `< K` that account contributes **0** — asserted explicitly, since the bug this
+   guards against (opening balance rendered flat backwards) looks correct.
+   Months where an account is not yet open carry `partialAccounts: true`.
+10. **UI ↔ API tie-out**: the numbers rendered on the dashboard (read from the
+    Playwright DOM) equal the API responses for the same seed — asserted, not
+    eyeballed.
+11. Playwright screenshot of the dashboard with seeded data visible in every card.
 
 ## Deferred (needs a new approved spec)
 
@@ -197,5 +300,33 @@ Assert against `fixtures/expected.json` (CLAUDE.md validation §5, §6):
 - **004-D — Current (partial) month.** ✅ Show the current month as **"month to
   date"**.
 
+## Resolved decisions (owner, 2026-07-18)
+
+- **004-E — Months before an account's opening balance date.** ✅ **Clamp the trend,
+  and contribute 0 before the opening date.** _Context:_ 004-B's carry-forward is
+  forward-only; nothing was said about the other end, where the balance formula's
+  window is empty and the naive read returns `opening_balance_cents` — a flat line
+  extending back before the account was tracked. That output is wrong in the worst
+  way: it looks right. Contributing 0 keeps the aggregate honest (net worth is the
+  money we have records for), and clamping the window start to the earliest
+  opening date keeps the chart from opening on a run of empty months. The rejected
+  alternative — render the pre-opening months with the account excluded and no
+  clamp — shows the same information with more chart real estate spent on nothing;
+  the `partialAccounts` flag carries the "not every account was open yet" caveat
+  either way.
+- **004-F — Archiving an asset vs. carry-forward.** ✅ **Archiving is a form-visibility
+  change only; snapshots keep carrying forward.** _Context:_ carry-forward as
+  specified in 004-B never expires, so an archived paid-off loan would subtract
+  from net worth forever, and the obvious "helpful" fix — excluding archived assets
+  from the net-worth query — silently **rewrites history**, changing what net worth
+  was in 2025 because of a checkbox ticked in 2026. History is immutable; the
+  correct way to end an asset's contribution is to record that it ended, by
+  entering a final snapshot (0 for a settled loan; 0 in the proceeds-landing month
+  for a liquidated investment), then archiving. `PUT` therefore rejects archived
+  assets — the final snapshot must come first, and the ordering is enforced rather
+  than documented.
+
 No open questions remain for this spec. The normalized monthly commitments tile
 follows decision **003-E** = (a): a read-only dashboard indicator, budgets untouched.
+The per-category divergence from spec 003 follows decision **003-M** and is stated
+in Definitions above with criterion 7 as its test.

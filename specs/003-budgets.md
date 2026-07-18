@@ -745,6 +745,9 @@ ESIMERKKI`). Rather than guessing from the free-text template name (fragile), th
    explicitly** and cite 003-M, so the difference is never filed as a CLAUDE.md §6
    tie-out violation. Do not let 004 inherit 003's line-attribution: that would
    make the dashboard's category chart depend on budget configuration.
+   **Satisfied (2026-07-18)** by 004's Definitions section (the "Per-category
+   attribution diverges from spec 003" paragraph) and its criterion 7, which
+   asserts the relabel case on both sides. No further 004 edit is owed here.
 
 ## Resolved decisions (owner, 2026-07-18 — OQ rulings)
 
