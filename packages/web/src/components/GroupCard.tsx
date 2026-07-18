@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import type { Category, ImportDetail, StagedGroup } from '@finance/shared';
 import { api } from '../api';
-import { formatCents, formatDate } from '../format';
+import { formatEur } from '@finance/shared';
+import { formatDate } from '../format';
 
 interface GroupCardProps {
   importId: number;
@@ -71,7 +72,7 @@ export function GroupCard({ importId, group, categories, onUpdated }: GroupCardP
           )}
           <div style={{ color: 'var(--muted)', fontSize: '0.9rem' }}>
             {group.count} transaction{group.count === 1 ? '' : 's'}, total{' '}
-            {formatCents(group.totalAmountCents)}
+            {formatEur(group.totalAmountCents)}
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -127,7 +128,7 @@ export function GroupCard({ importId, group, categories, onUpdated }: GroupCardP
                     </>
                   )}
                 </td>
-                <td>{formatCents(row.amountCents)}</td>
+                <td>{formatEur(row.amountCents)}</td>
                 <td>
                   <select
                     aria-label={`Category for row ${row.id}`}

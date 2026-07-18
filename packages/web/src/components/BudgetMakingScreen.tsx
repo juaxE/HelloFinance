@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import type { BudgetMonth, Category } from '@finance/shared';
 import { api } from '../api';
-import { formatCents, parseEurosToCents } from '../format';
+import { formatEur } from '@finance/shared';
+import { parseEurosToCents } from '../format';
 
 /**
  * The budget-making screen (spec 003): one row per envelope-relevant category
@@ -152,7 +153,7 @@ export function BudgetMakingScreen({
                 <td style={{ color: 'var(--muted)' }}>
                   {named.length === 0
                     ? ''
-                    : named.map((l) => `${l.name} ${formatCents(l.amountCents)}`).join(', ')}
+                    : named.map((l) => `${l.name} ${formatEur(l.amountCents)}`).join(', ')}
                 </td>
                 <td>
                   <input
@@ -187,7 +188,7 @@ export function BudgetMakingScreen({
                   )}
                 </td>
                 <td style={{ textAlign: 'right' }} data-testid="planned-subtotal">
-                  {formatCents(plannedSubtotal)}
+                  {formatEur(plannedSubtotal)}
                 </td>
               </tr>
             );
@@ -222,7 +223,7 @@ function initialDrafts(month: BudgetMonth): Map<number, Draft> {
 
 /**
  * Cents as editable input text — plain `123.45`, no thousands separators or
- * currency symbol, so the value stays easy to edit. `formatCents` is for
+ * currency symbol, so the value stays easy to edit. `formatEur` is for
  * display; this is for a text field the user is about to type into.
  */
 function centsToInput(cents: number): string {

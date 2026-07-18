@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import type { Category, LabelingRule, RecurringTemplate } from '@finance/shared';
 import { api } from '../api';
-import { formatCents, parseEurosToCents } from '../format';
+import { formatEur } from '@finance/shared';
+import { parseEurosToCents } from '../format';
 
 /**
  * Recurring templates — the bill plan (spec 003).
@@ -266,7 +267,7 @@ export function TemplatesTable({
               <tr key={t.id} data-testid="template-row">
                 <td>{t.name}</td>
                 <td>{categoryName(t.categoryId)}</td>
-                <td style={{ textAlign: 'right' }}>{formatCents(t.amountCents)}</td>
+                <td style={{ textAlign: 'right' }}>{formatEur(t.amountCents)}</td>
                 <td>{cadenceLabel(t.intervalMonths)}</td>
                 <td>{t.expectedDayOfMonth}</td>
                 <td>{t.startMonth}</td>
