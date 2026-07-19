@@ -155,6 +155,15 @@ learned rules.
   import, that is the signal to revisit `(account_id, archive_id)` — which would cost
   the wrong-account detection, so it is a trade, not a free fix. Do not "harden" this
   pre-emptively.
+- The partial month is marked with a **hatch, never a fade**. Opacity cannot do this
+  job: holding a faded bar at the 3:1 non-text contrast floor needs alpha 0.92 on the
+  dark card and 1.00 on the light one, i.e. no fade at all. The hatch keeps the band
+  solid and stripes it with a lighter/darker shade of its own colour, so the signal
+  rides on neither hue nor luminance and survives greyscale and every CVD type.
+- Chart fills are checked numerically, not by eye: every fill AND its hatch stripe must
+  clear 3:1 against its own card, and no two bands in the spending stack may fall under
+  ΔE 10 in deuteranopia simulation. Both defects shipped once — dark blue/purple
+  converged at ΔE 7.6, and the light remainder grey sat at 2.82:1.
 - Flow aggregates (cash flow, income, spending, budget) mark the current month
   `partial` and the dashboard excludes it from every window total — a flow accumulates
   over a period, so the month in progress is an *incomplete* period, not a small one.

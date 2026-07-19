@@ -42,7 +42,12 @@ export type Transaction = z.infer<typeof zTransaction>;
  */
 export const zTransactionPatch = z
   .object({
-    categoryId: z.number().int(),
+    /**
+     * `null` sends the row back to **Uncategorized**, re-queueing it for triage.
+     * Only legal with `one_off`: a labeling rule must name a category, so there
+     * is no such thing as a rule to "no category".
+     */
+    categoryId: z.number().int().nullable(),
     scope: z.enum(['one_off', 'update_rule']),
     note: z.string().nullable(),
   })
@@ -50,6 +55,10 @@ export const zTransactionPatch = z
   .refine((p) => Object.keys(p).length > 0, { message: 'no fields to update' })
   .refine((p) => !('categoryId' in p) || 'scope' in p, {
     message: 'scope is required when categoryId is set',
+    path: ['scope'],
+  })
+  .refine((p) => p.categoryId !== null || p.scope !== 'update_rule', {
+    message: 'cannot update a rule to no category — use one_off to uncategorize',
     path: ['scope'],
   });
 export type TransactionPatch = z.infer<typeof zTransactionPatch>;

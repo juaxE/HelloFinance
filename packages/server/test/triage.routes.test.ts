@@ -401,3 +401,36 @@ describe('against the seeded fixtures', () => {
     await fixtureApp.close();
   });
 });
+
+describe('sending a transaction back to Uncategorized', () => {
+  it('re-queues the row for triage and clears its source', async () => {
+    const row = insertUncategorized('Alepa Kamppi');
+    await applyGroup({ normalizedCounterparty: 'ALEPA', categoryId: groceriesId, rememberRule: false });
+    expect(db.select().from(transactions).get()!.categoryId).toBe(groceriesId);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/api/transactions/${row.id}`,
+      payload: { categoryId: null, scope: 'one_off' },
+    });
+    expect(res.statusCode).toBe(200);
+
+    const after = db.select().from(transactions).where(eq(transactions.id, row.id)).get()!;
+    expect(after.categoryId).toBeNull();
+    expect(after.categorySource).toBeNull();
+
+    const { totalCount } = await queue();
+    expect(totalCount).toBe(1);
+  });
+
+  it('rejects uncategorizing with update_rule — a rule must name a category', async () => {
+    const row = insertUncategorized('Alepa Kamppi');
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/api/transactions/${row.id}`,
+      payload: { categoryId: null, scope: 'update_rule' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(db.select().from(labelingRules).all()).toHaveLength(0);
+  });
+});

@@ -58,7 +58,7 @@ const SERIES = {
     net: '#4a3aa7',
     salary: '#2a78d6',
     otherIncome: '#00767a',
-    planned: '#9a9a96',
+    planned: '#767672',
     actual: '#2a78d6',
   },
   dark: {
@@ -88,13 +88,66 @@ const SERIES = {
  */
 const SPEND_PALETTE = {
   light: ['#2a78d6', '#008300', '#eb6834', '#4a3aa7', '#00767a'],
-  dark: ['#6ea1ff', '#4bb54b', '#ff9a6b', '#9c8ff0', '#4fb3b8'],
+  dark: ['#6ea1ff', '#4bb54b', '#ff9a6b', '#d98cf0', '#4fb3b8'],
 } as const;
-const REST_COLOR = { light: '#9a9a96', dark: '#6d6d6d' } as const;
+const REST_COLOR = { light: '#767672', dark: '#6d6d6d' } as const;
 const UNCATEGORIZED_COLOR = { light: '#a76a00', dark: '#e0a33a' } as const;
 
-/** The month in progress, drawn through but faded. */
-const PARTIAL_OPACITY = 0.35;
+/**
+ * The month in progress is marked with a HATCH, not a fade.
+ *
+ * Fading was the obvious choice and is unusable: to keep a partial bar at the
+ * 3:1 non-text contrast floor, the collapsed-remainder grey needs alpha 0.92 on
+ * the dark card and 1.00 on the light one — i.e. no fade at all. Opacity cannot
+ * both signal "incomplete" and stay legible.
+ *
+ * The hatch keeps the band at full strength and stripes it with a lighter (dark
+ * theme) or darker (light theme) shade of its own colour, so base and stripe
+ * both clear 3:1 and the signal survives greyscale and every CVD type — it is
+ * not carried by hue or luminance at all.
+ */
+const HATCH_MIX = { light: { target: '#000000', amount: 0.3 }, dark: { target: '#ffffff', amount: 0.45 } } as const;
+
+function mix(from: string, to: string, amount: number): string {
+  const channels = (hex: string): number[] =>
+    [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  const [a, b] = [channels(from), channels(to)];
+  return `#${a.map((v, i) => Math.round(v * (1 - amount) + b[i]! * amount).toString(16).padStart(2, '0')).join('')}`;
+}
+
+const hatchId = (color: string): string => `hatch-${color.slice(1)}`;
+
+/** Solid when the month is complete, hatched while it is still filling. */
+const fillFor = (color: string, partial: boolean): string =>
+  partial ? `url(#${hatchId(color)})` : color;
+
+/**
+ * One document-global `<defs>` for every hatch the page can use. Kept outside
+ * the charts because SVG pattern ids resolve document-wide, and repeating them
+ * per chart would define the same id several times.
+ */
+function HatchDefs({ colors, theme }: { colors: string[]; theme: 'light' | 'dark' }) {
+  const { target, amount } = HATCH_MIX[theme];
+  return (
+    <svg width="0" height="0" style={{ position: 'absolute' }} aria-hidden="true">
+      <defs>
+        {[...new Set(colors)].map((color) => (
+          <pattern
+            key={color}
+            id={hatchId(color)}
+            width="6"
+            height="6"
+            patternUnits="userSpaceOnUse"
+            patternTransform="rotate(45)"
+          >
+            <rect width="6" height="6" fill={color} />
+            <rect width="2" height="6" fill={mix(color, target, amount)} />
+          </pattern>
+        ))}
+      </defs>
+    </svg>
+  );
+}
 
 const WINDOWS = [3, 6, 9, 12] as const;
 
@@ -283,6 +336,21 @@ export function DashboardPage({
         </p>
       )}
 
+      <HatchDefs
+        theme={theme}
+        colors={[
+          series.income,
+          series.expenses,
+          series.salary,
+          series.otherIncome,
+          series.planned,
+          series.actual,
+          ...SPEND_PALETTE[theme],
+          REST_COLOR[theme],
+          UNCATEGORIZED_COLOR[theme],
+        ]}
+      />
+
       <div
         style={{
           display: 'flex',
@@ -432,7 +500,7 @@ export function DashboardPage({
                 <Legend wrapperStyle={{ fontSize: 12 }} />
                 <Bar dataKey="incomeCents" name="Income" fill={series.income} radius={[4, 4, 0, 0]} isAnimationActive={false}>
                   {cashFlow.map((p) => (
-                    <Cell key={p.month} fill={series.income} fillOpacity={p.partial ? PARTIAL_OPACITY : 1} />
+                    <Cell key={p.month} fill={fillFor(series.income, p.partial)} />
                   ))}
                 </Bar>
                 <Bar
@@ -443,7 +511,7 @@ export function DashboardPage({
                   isAnimationActive={false}
                 >
                   {cashFlow.map((p) => (
-                    <Cell key={p.month} fill={series.expenses} fillOpacity={p.partial ? PARTIAL_OPACITY : 1} />
+                    <Cell key={p.month} fill={fillFor(series.expenses, p.partial)} />
                   ))}
                 </Bar>
                 <Line
@@ -502,7 +570,7 @@ export function DashboardPage({
               <Legend wrapperStyle={{ fontSize: 12 }} />
               <Bar dataKey="salaryCents" stackId="income" name="Salary" fill={series.salary} isAnimationActive={false}>
                 {income.map((p) => (
-                  <Cell key={p.month} fill={series.salary} fillOpacity={p.partial ? PARTIAL_OPACITY : 1} />
+                  <Cell key={p.month} fill={fillFor(series.salary, p.partial)} />
                 ))}
               </Bar>
               <Bar
@@ -513,7 +581,7 @@ export function DashboardPage({
                 isAnimationActive={false}
               >
                 {income.map((p) => (
-                  <Cell key={p.month} fill={series.otherIncome} fillOpacity={p.partial ? PARTIAL_OPACITY : 1} />
+                  <Cell key={p.month} fill={fillFor(series.otherIncome, p.partial)} />
                 ))}
               </Bar>
             </BarChart>
@@ -638,12 +706,12 @@ export function DashboardPage({
                 <Legend wrapperStyle={{ fontSize: 12 }} />
                 <Bar dataKey="plannedCents" name="Planned" fill={series.planned} radius={[4, 4, 0, 0]} isAnimationActive={false}>
                   {budget.map((p) => (
-                    <Cell key={p.month} fill={series.planned} fillOpacity={p.partial ? PARTIAL_OPACITY : 1} />
+                    <Cell key={p.month} fill={fillFor(series.planned, p.partial)} />
                   ))}
                 </Bar>
                 <Bar dataKey="actualCents" name="Actual" fill={series.actual} radius={[4, 4, 0, 0]} isAnimationActive={false}>
                   {budget.map((p) => (
-                    <Cell key={p.month} fill={series.actual} fillOpacity={p.partial ? PARTIAL_OPACITY : 1} />
+                    <Cell key={p.month} fill={fillFor(series.actual, p.partial)} />
                   ))}
                 </Bar>
               </BarChart>
@@ -747,8 +815,7 @@ function SpendingTrend({
               {data.map((row) => (
                 <Cell
                   key={String(row.month)}
-                  fill={colorFor(s.key, rank)}
-                  fillOpacity={row.partial ? PARTIAL_OPACITY : 1}
+                  fill={fillFor(colorFor(s.key, rank), row.partial === true)}
                 />
               ))}
             </Bar>
