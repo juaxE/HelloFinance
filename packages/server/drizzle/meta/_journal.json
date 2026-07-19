@@ -29,6 +29,13 @@
       "when": 1784332723947,
       "tag": "0003_staged_transactions_drop_bic",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1784460274815,
+      "tag": "0004_asset_snapshots_nonneg",
+      "breakpoints": true
     }
   ]
 }

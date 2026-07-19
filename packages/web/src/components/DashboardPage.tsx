@@ -156,23 +156,35 @@ export function DashboardPage({ onOpenBudgets }: { onOpenBudgets: (month: string
 
   const loadTrends = useCallback(async (w: number) => {
     const seq = ++trendsReq.current;
-    const [nw, cf] = await Promise.all([api.getNetWorth(w), api.getCashFlow(w)]);
-    if (seq !== trendsReq.current) return;
-    setNetWorth(nw);
-    setCashFlow(cf);
+    try {
+      const [nw, cf] = await Promise.all([api.getNetWorth(w), api.getCashFlow(w)]);
+      if (seq !== trendsReq.current) return;
+      setNetWorth(nw);
+      setCashFlow(cf);
+      setError(null);
+    } catch (e) {
+      if (seq !== trendsReq.current) return;
+      setError(e instanceof Error ? e.message : 'failed to load the trends');
+    }
   }, []);
 
   const loadMonth = useCallback(async (target: string) => {
     const seq = ++monthReq.current;
-    const [inc, cats, bva] = await Promise.all([
-      api.getIncome(target),
-      api.getCategoryBreakdown(target),
-      api.getBudgetVsActual(target),
-    ]);
-    if (seq !== monthReq.current) return;
-    setIncome(inc);
-    setBreakdown(cats);
-    setBudget(bva);
+    try {
+      const [inc, cats, bva] = await Promise.all([
+        api.getIncome(target),
+        api.getCategoryBreakdown(target),
+        api.getBudgetVsActual(target),
+      ]);
+      if (seq !== monthReq.current) return;
+      setIncome(inc);
+      setBreakdown(cats);
+      setBudget(bva);
+      setError(null);
+    } catch (e) {
+      if (seq !== monthReq.current) return;
+      setError(e instanceof Error ? e.message : 'failed to load the month');
+    }
   }, []);
 
   useEffect(() => {
@@ -183,16 +195,12 @@ export function DashboardPage({ onOpenBudgets }: { onOpenBudgets: (month: string
   }, []);
 
   useEffect(() => {
-    loadTrends(window_).catch((e) =>
-      setError(e instanceof Error ? e.message : 'failed to load the trends'),
-    );
+    void loadTrends(window_);
   }, [window_, loadTrends]);
 
   useEffect(() => {
     if (month === null) return;
-    loadMonth(month).catch((e) =>
-      setError(e instanceof Error ? e.message : 'failed to load the month'),
-    );
+    void loadMonth(month);
   }, [month, loadMonth]);
 
   const partialMonths = netWorth.filter((p) => p.partialAccounts).map((p) => p.month);
@@ -538,15 +546,82 @@ function BudgetCard({ budget }: { budget: BudgetVsActual }) {
 }
 
 /**
- * Snapshot entry for the month. Archived assets are absent (decision 004-F), and
- * archiving warns that a non-zero last value keeps carrying forward — offering
- * to enter the closing `0` first, which is the intended way to retire a paid-off
- * loan or a liquidated investment.
+ * The archive confirmation. A still-carrying asset gets all three outcomes as
+ * explicit buttons; a zero/absent one only needs archive-or-back-out.
  */
-function AssetSnapshotCard({ month, onSaved }: { month: string; onSaved: () => void }) {
+function ArchiveConfirm({
+  entry,
+  month,
+  onChoose,
+  onCancel,
+}: {
+  entry: AssetSnapshotEntry;
+  month: string;
+  onChoose: (zeroFirst: boolean) => void;
+  onCancel: () => void;
+}) {
+  const carrying = entry.valueCents !== null && entry.valueCents !== 0;
+  return (
+    <div
+      role="alertdialog"
+      aria-label={`Archive ${entry.name}`}
+      data-testid="archive-confirm"
+      style={{
+        border: '1px solid #d9d7d2',
+        borderRadius: 4,
+        padding: '0.6rem',
+        marginTop: '0.5rem',
+        fontSize: '0.8rem',
+      }}
+    >
+      <p style={{ margin: '0 0 0.5rem' }}>
+        {carrying ? (
+          <>
+            <strong>{entry.name}</strong> last reported {formatEur(entry.valueCents!)}. Archiving
+            only hides it from this form — that value keeps counting in net worth every month from
+            now on.
+          </>
+        ) : (
+          <>
+            Archive <strong>{entry.name}</strong>? It disappears from this form; its history is
+            kept.
+          </>
+        )}
+      </p>
+      <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+        {carrying && (
+          <button data-testid="archive-zero-first" onClick={() => onChoose(true)}>
+            Close at 0 for {month}, then archive
+          </button>
+        )}
+        <button data-testid="archive-anyway" onClick={() => onChoose(false)}>
+          {carrying ? 'Archive anyway' : 'Archive'}
+        </button>
+        <button data-testid="archive-cancel" onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Snapshot entry for the month. Archived assets are absent (decision 004-F), and
+ * archiving a still-carrying asset offers the closing `0` first, which is the
+ * intended way to retire a paid-off loan or a liquidated investment.
+ *
+ * The confirmation is an inline panel rather than `window.confirm` because the
+ * carrying case is a genuine THREE-way choice — zero-then-archive, archive
+ * anyway, or back out — and a two-way native confirm has no way to express it.
+ * Archiving while a non-zero value carries forward strands that value in net
+ * worth for every future month with no way back through the UI, so backing out
+ * has to be reachable and must never be the fall-through.
+ */
+function AssetSnapshotCard({ month, onSaved }: { month: string; onSaved: () => Promise<void> }) {
   const [entries, setEntries] = useState<AssetSnapshotEntry[]>([]);
   const [drafts, setDrafts] = useState<Record<number, string>>({});
   const [status, setStatus] = useState<string | null>(null);
+  const [pendingArchive, setPendingArchive] = useState<AssetSnapshotEntry | null>(null);
 
   const load = useCallback(async () => {
     const rows = await api.getAssetSnapshots(month);
@@ -578,25 +653,23 @@ function AssetSnapshotCard({ month, onSaved }: { month: string; onSaved: () => v
     await api.saveAssetSnapshots(month, values);
     setStatus(`Saved ${values.length} value(s) for ${month}`);
     await load();
-    onSaved();
+    await onSaved();
   }
 
-  async function archive(entry: AssetSnapshotEntry) {
-    const carrying = entry.valueCents !== null && entry.valueCents !== 0;
-    const message = carrying
-      ? `"${entry.name}" last reported ${formatEur(entry.valueCents!)}. Archiving only hides it from this form — that value keeps counting in net worth every month from now on.\n\nEnter a closing 0 for ${month} first?`
-      : `Archive "${entry.name}"? It disappears from this form; its history is kept.`;
-    if (carrying) {
-      if (window.confirm(message)) {
-        await api.saveAssetSnapshots(month, [{ assetId: entry.assetId, valueCents: 0 }]);
-      }
-    } else if (!window.confirm(message)) {
-      return;
+  /** `zeroFirst` writes the closing 0 for `month` before archiving. */
+  async function archive(entry: AssetSnapshotEntry, zeroFirst: boolean) {
+    setPendingArchive(null);
+    if (zeroFirst) {
+      await api.saveAssetSnapshots(month, [{ assetId: entry.assetId, valueCents: 0 }]);
     }
     await api.patchAsset(entry.assetId, { archived: true });
-    setStatus(`Archived "${entry.name}"`);
+    setStatus(
+      zeroFirst
+        ? `Archived "${entry.name}" after closing it at 0,00 €`
+        : `Archived "${entry.name}"`,
+    );
     await load();
-    onSaved();
+    await onSaved();
   }
 
   return (
@@ -628,12 +701,29 @@ function AssetSnapshotCard({ month, onSaved }: { month: string; onSaved: () => v
               onChange={(e) => setDrafts((d) => ({ ...d, [entry.assetId]: e.target.value }))}
               style={{ width: '9rem', textAlign: 'right' }}
             />
-            <button onClick={() => archive(entry)} style={{ fontSize: '0.75rem' }}>
+            <button
+              onClick={() => setPendingArchive(entry)}
+              style={{ fontSize: '0.75rem' }}
+              data-testid={`archive-${entry.assetId}`}
+            >
               Archive
             </button>
           </li>
         ))}
       </ul>
+      {pendingArchive && (
+        <ArchiveConfirm
+          entry={pendingArchive}
+          month={month}
+          onChoose={(zeroFirst) =>
+            archive(pendingArchive, zeroFirst).catch((e) => {
+              setPendingArchive(null);
+              setStatus(String(e));
+            })
+          }
+          onCancel={() => setPendingArchive(null)}
+        />
+      )}
       <button onClick={() => save().catch((e) => setStatus(String(e)))} style={{ marginTop: '0.5rem' }}>
         Save {month}
       </button>

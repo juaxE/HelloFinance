@@ -346,6 +346,16 @@ consistent with the existing code; none changes a behavior the spec pins.
   ordering, which is out of scope here.
 - Drill-down from a chart into the underlying transaction list (already listed
   as deferred below).
+- **One window selector, not two.** The spec's UI sketch gives the cash-flow card
+  the "same window selector" as net worth. It is implemented as a single control
+  in the net-worth header driving both charts through shared state, so the two
+  can never disagree — but from the cash-flow card the control is neither present
+  nor obviously connected. Owner reviewed and chose to keep the single selector;
+  hoisting it above both cards is the open alternative.
+- **Archived assets can only be restored through the API.** `PATCH /api/assets/:id`
+  accepts `{ archived: false }`, but the entry form lists non-archived assets
+  only and offers no way back. Mis-archiving is now hard (the confirm has an
+  explicit cancel), but an "show archived" toggle would close the loop.
 - **`fixtures/generate.mjs` normalizes commitments in floating point.**
   `recurringCommitments()` uses `Math.round(Math.abs(cents) / intervalMonths)`
   while the server uses the pinned integer `roundHalfUpAwayFromZero`. Harmless

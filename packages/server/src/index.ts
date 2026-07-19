@@ -15,6 +15,13 @@ app
   .listen({ host: HOST, port: PORT })
   .then((address) => {
     app.log.info(`server listening on ${address} (loopback only)`);
+    if (NOW_OVERRIDE) {
+      app.log.warn(
+        `FINANCE_NOW is set: "today" is pinned to ${NOW_OVERRIDE}, not the wall clock. ` +
+          'Budget materialization and the past-month write lock follow this date — ' +
+          'unset it for normal use.',
+      );
+    }
   })
   .catch((err) => {
     app.log.error(err);

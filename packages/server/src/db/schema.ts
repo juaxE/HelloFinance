@@ -393,7 +393,14 @@ export const assetSnapshots = sqliteTable(
       .notNull()
       .$defaultFn(() => new Date()),
   },
-  (t) => ({ assetMonthUq: uniqueIndex('uq_asset_snapshots_asset_month').on(t.assetId, t.month) }),
+  (t) => ({
+    assetMonthUq: uniqueIndex('uq_asset_snapshots_asset_month').on(t.assetId, t.month),
+    // Loans are stored positive and SUBTRACTED by the net-worth formula, so a
+    // negative value would flip an asset's sign and raise net worth. Enforced
+    // here as well as in `zAssetSnapshotsPut` so no write path — seeds and
+    // fixtures included — can reach the invariant from behind the API.
+    valueNonNegative: check('ck_asset_snapshots_value_nonneg', sql`${t.valueCents} >= 0`),
+  }),
 );
 
 // --- Relations (query ergonomics; no columns/constraints of their own) -----
