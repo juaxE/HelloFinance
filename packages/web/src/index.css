@@ -1,19 +1,31 @@
 :root {
   color-scheme: light dark;
+  --text: #1a1a1a;
+  --bg: #ffffff;
+  --bg-card: #ffffff;
   --border: #d8d8d8;
   --muted: #666;
   --bg-subtle: #f7f7f7;
+  --track: #ececea;
   --accent: #2f6fed;
+  --accent-contrast: #ffffff;
   --danger: #c0392b;
+  --warn: #a76a00;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
+    --text: #e8e8e6;
+    --bg: #141414;
+    --bg-card: #1c1c1c;
     --border: #3a3a3a;
     --muted: #a0a0a0;
     --bg-subtle: #1c1c1c;
+    --track: #2e2e2e;
     --accent: #6ea1ff;
+    --accent-contrast: #10233f;
     --danger: #e57373;
+    --warn: #e0a33a;
   }
 }
 
@@ -24,6 +36,8 @@
 body {
   margin: 0;
   font-family: system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
 }
 
 button {

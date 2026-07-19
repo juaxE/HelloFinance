@@ -38,25 +38,71 @@ import { parseEurosToCents } from '../format';
 
 // Series colors from the validated categorical order. Loans additionally use a
 // DASHED stroke: red↔green sits in the 6–8 CVD separation band, which is only
-// legal alongside a secondary encoding.
-const COLOR = {
-  accounts: '#2a78d6',
-  investments: '#008300',
-  loans: '#e34948',
-  netWorth: '#4a3aa7',
-  income: '#2a78d6',
-  expenses: '#eb6834',
-  net: '#4a3aa7',
-  spend: '#2a78d6',
+// legal alongside a secondary encoding. The dark row keeps that hue order but
+// lightened for a dark card, where the light row's green and indigo fall to
+// roughly 2.5:1 — more than a 2px stroke can carry.
+const SERIES = {
+  light: {
+    accounts: '#2a78d6',
+    investments: '#008300',
+    loans: '#e34948',
+    netWorth: '#4a3aa7',
+    income: '#2a78d6',
+    expenses: '#eb6834',
+    net: '#4a3aa7',
+  },
+  dark: {
+    accounts: '#6ea1ff',
+    investments: '#4bb54b',
+    loans: '#ff7b78',
+    netWorth: '#9c8ff0',
+    income: '#6ea1ff',
+    expenses: '#ff9a6b',
+    net: '#9c8ff0',
+  },
 } as const;
+
+/** The category bar fill: a filled swatch, so one value reads on both themes. */
+const SPEND = '#2a78d6';
 
 const WINDOWS = [3, 6, 9, 12] as const;
 
+/**
+ * Chart chrome is resolved in JS, not from the CSS custom properties the rest of
+ * this file uses: Recharts emits `stroke`/`fill` as SVG presentation attributes,
+ * and `var()` is not valid there — it would silently paint nothing.
+ */
+const CHROME = {
+  light: { grid: '#f0f0ee', axis: '#c9c8c4', tooltipBg: '#ffffff', tooltipText: '#1a1a1a' },
+  dark: { grid: '#2a2a2a', axis: '#5a5a5a', tooltipBg: '#1c1c1c', tooltipText: '#e8e8e6' },
+} as const;
+
+function usePrefersDark(): boolean {
+  const [dark, setDark] = useState(() => window.matchMedia('(prefers-color-scheme: dark)').matches);
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const onChange = (e: MediaQueryListEvent) => setDark(e.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+  return dark;
+}
+
 const card: React.CSSProperties = {
-  border: '1px solid #e4e4e1',
+  border: '1px solid var(--border)',
   borderRadius: 10,
   padding: '1rem',
-  background: '#fff',
+  background: 'var(--bg-card)',
+  color: 'var(--text)',
+};
+
+const smallButton: React.CSSProperties = {
+  border: '1px solid var(--border)',
+  background: 'transparent',
+  color: 'inherit',
+  borderRadius: 6,
+  padding: '0.15rem 0.5rem',
+  fontSize: '0.75rem',
 };
 
 /** A money value that also carries its raw cents, for the DOM/API tie-out. */
@@ -83,7 +129,7 @@ function Card({
     <section style={card}>
       <header style={{ display: 'flex', alignItems: 'baseline', gap: '0.75rem', marginBottom: '0.75rem' }}>
         <h2 style={{ fontSize: '0.95rem', margin: 0, whiteSpace: 'nowrap' }}>{title}</h2>
-        {subtitle && <span style={{ fontSize: '0.75rem', color: '#6b6a66' }}>{subtitle}</span>}
+        {subtitle && <span style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>{subtitle}</span>}
         <span style={{ flex: 1 }} />
         {actions}
       </header>
@@ -107,12 +153,9 @@ function WindowSelector({
           onClick={() => onChange(w)}
           aria-pressed={value === w}
           style={{
-            border: '1px solid #e4e4e1',
-            background: value === w ? '#2a78d6' : 'transparent',
-            color: value === w ? '#fff' : 'inherit',
-            borderRadius: 6,
-            padding: '0.15rem 0.5rem',
-            fontSize: '0.75rem',
+            ...smallButton,
+            background: value === w ? 'var(--accent)' : 'transparent',
+            color: value === w ? 'var(--accent-contrast)' : 'inherit',
           }}
         >
           {w}m
@@ -126,6 +169,9 @@ const euroAxis = (cents: number): string => `${Math.round(cents / 100)}`;
 const tooltipFormatter = (value: number, name: string): [string, string] => [formatEur(value), name];
 
 export function DashboardPage({ onOpenBudgets }: { onOpenBudgets: (month: string) => void }) {
+  const theme = usePrefersDark() ? 'dark' : 'light';
+  const series = SERIES[theme];
+  const chrome = CHROME[theme];
   const [window_, setWindow] = useState<number>(12);
   const [showBreakdown, setShowBreakdown] = useState(false);
   const [netWorth, setNetWorth] = useState<NetWorthPoint[]>([]);
@@ -209,7 +255,7 @@ export function DashboardPage({ onOpenBudgets }: { onOpenBudgets: (month: string
   return (
     <div data-testid="dashboard">
       {error && (
-        <p role="alert" style={{ color: '#b3261e' }}>
+        <p role="alert" style={{ color: 'var(--danger)' }}>
           {error}
         </p>
       )}
@@ -234,14 +280,7 @@ export function DashboardPage({ onOpenBudgets }: { onOpenBudgets: (month: string
                 <button
                   onClick={() => setShowBreakdown((s) => !s)}
                   aria-pressed={showBreakdown}
-                  style={{
-                    border: '1px solid #e4e4e1',
-                    background: 'transparent',
-                    borderRadius: 6,
-                    padding: '0.15rem 0.5rem',
-                    fontSize: '0.75rem',
-                    marginRight: '0.5rem',
-                  }}
+                  style={{ ...smallButton, marginRight: '0.5rem' }}
                 >
                   Breakdown
                 </button>
@@ -256,16 +295,29 @@ export function DashboardPage({ onOpenBudgets }: { onOpenBudgets: (month: string
             )}
             <ResponsiveContainer width="100%" height={220}>
               <LineChart data={netWorth} margin={{ top: 4, right: 8, bottom: 0, left: 8 }}>
-                <CartesianGrid stroke="#f0f0ee" vertical={false} />
-                <XAxis dataKey="month" tick={{ fontSize: 11 }} stroke="#c9c8c4" />
-                <YAxis tickFormatter={euroAxis} tick={{ fontSize: 11 }} stroke="#c9c8c4" width={56} />
-                <Tooltip formatter={tooltipFormatter} />
+                <CartesianGrid stroke={chrome.grid} vertical={false} />
+                <XAxis dataKey="month" tick={{ fontSize: 11, fill: chrome.axis }} stroke={chrome.axis} />
+                <YAxis
+                  tickFormatter={euroAxis}
+                  tick={{ fontSize: 11, fill: chrome.axis }}
+                  stroke={chrome.axis}
+                  width={56}
+                />
+                <Tooltip
+                  formatter={tooltipFormatter}
+                  contentStyle={{
+                    background: chrome.tooltipBg,
+                    border: `1px solid ${chrome.axis}`,
+                    borderRadius: 6,
+                  }}
+                  labelStyle={{ color: chrome.tooltipText }}
+                />
                 <Legend wrapperStyle={{ fontSize: 12 }} />
                 <Line
                   type="monotone"
                   dataKey="netWorthCents"
                   name="Net worth"
-                  stroke={COLOR.netWorth}
+                  stroke={series.netWorth}
                   strokeWidth={2}
                   dot={false}
                   isAnimationActive={false}
@@ -275,7 +327,7 @@ export function DashboardPage({ onOpenBudgets }: { onOpenBudgets: (month: string
                     type="monotone"
                     dataKey="accountsCents"
                     name="Accounts"
-                    stroke={COLOR.accounts}
+                    stroke={series.accounts}
                     strokeWidth={2}
                     dot={false}
                   isAnimationActive={false}
@@ -286,7 +338,7 @@ export function DashboardPage({ onOpenBudgets }: { onOpenBudgets: (month: string
                     type="monotone"
                     dataKey="investmentsCents"
                     name="Investments"
-                    stroke={COLOR.investments}
+                    stroke={series.investments}
                     strokeWidth={2}
                     dot={false}
                   isAnimationActive={false}
@@ -297,7 +349,7 @@ export function DashboardPage({ onOpenBudgets }: { onOpenBudgets: (month: string
                     type="monotone"
                     dataKey="loansCents"
                     name="Loans"
-                    stroke={COLOR.loans}
+                    stroke={series.loans}
                     strokeWidth={2}
                     strokeDasharray="5 3"
                     dot={false}
@@ -327,16 +379,29 @@ export function DashboardPage({ onOpenBudgets }: { onOpenBudgets: (month: string
           <Card title="Cash flow" subtitle="transfers excluded">
             <ResponsiveContainer width="100%" height={220}>
               <BarChart data={cashFlow} margin={{ top: 4, right: 8, bottom: 0, left: 8 }}>
-                <CartesianGrid stroke="#f0f0ee" vertical={false} />
-                <XAxis dataKey="month" tick={{ fontSize: 11 }} stroke="#c9c8c4" />
-                <YAxis tickFormatter={euroAxis} tick={{ fontSize: 11 }} stroke="#c9c8c4" width={56} />
-                <Tooltip formatter={tooltipFormatter} />
+                <CartesianGrid stroke={chrome.grid} vertical={false} />
+                <XAxis dataKey="month" tick={{ fontSize: 11, fill: chrome.axis }} stroke={chrome.axis} />
+                <YAxis
+                  tickFormatter={euroAxis}
+                  tick={{ fontSize: 11, fill: chrome.axis }}
+                  stroke={chrome.axis}
+                  width={56}
+                />
+                <Tooltip
+                  formatter={tooltipFormatter}
+                  contentStyle={{
+                    background: chrome.tooltipBg,
+                    border: `1px solid ${chrome.axis}`,
+                    borderRadius: 6,
+                  }}
+                  labelStyle={{ color: chrome.tooltipText }}
+                />
                 <Legend wrapperStyle={{ fontSize: 12 }} />
-                <Bar dataKey="incomeCents" name="Income" fill={COLOR.income} radius={[4, 4, 0, 0]} isAnimationActive={false} />
+                <Bar dataKey="incomeCents" name="Income" fill={series.income} radius={[4, 4, 0, 0]} isAnimationActive={false} />
                 <Bar
                   dataKey="expensesCents"
                   name="Expenses"
-                  fill={COLOR.expenses}
+                  fill={series.expenses}
                   radius={[4, 4, 0, 0]}
                   isAnimationActive={false}
                 />
@@ -344,7 +409,7 @@ export function DashboardPage({ onOpenBudgets }: { onOpenBudgets: (month: string
                   type="monotone"
                   dataKey="netCents"
                   name="Net"
-                  stroke={COLOR.net}
+                  stroke={series.net}
                   strokeWidth={2}
                   dot={false}
                   isAnimationActive={false}
@@ -378,7 +443,7 @@ export function DashboardPage({ onOpenBudgets }: { onOpenBudgets: (month: string
                   <Money cents={income.otherIncomeCents} testId="income-other" />
                 </dd>
               </dl>
-              <p style={{ fontSize: '0.75rem', color: '#6b6a66', marginBottom: 0 }}>
+              <p style={{ fontSize: '0.75rem', color: 'var(--muted)', marginBottom: 0 }}>
                 Reimbursements are not income — they reduce the category they sit in.
               </p>
             </>
@@ -390,9 +455,9 @@ export function DashboardPage({ onOpenBudgets }: { onOpenBudgets: (month: string
             <>
               <p style={{ fontSize: '1.6rem', margin: '0 0 0.25rem' }}>
                 ≈ <Money cents={commitments.normalizedMonthlyCents} testId="commitments-total" />
-                <span style={{ fontSize: '0.9rem', color: '#6b6a66' }}> /mo</span>
+                <span style={{ fontSize: '0.9rem', color: 'var(--muted)' }}> /mo</span>
               </p>
-              <p style={{ fontSize: '0.75rem', color: '#6b6a66', marginTop: 0 }}>
+              <p style={{ fontSize: '0.75rem', color: 'var(--muted)', marginTop: 0 }}>
                 An estimate: quarterly and yearly bills are smoothed into a monthly equivalent, so
                 this is not what any single month is billed.
               </p>
@@ -405,7 +470,7 @@ export function DashboardPage({ onOpenBudgets }: { onOpenBudgets: (month: string
                     <li key={t.templateId} data-testid={`commitment-${t.templateId}`}>
                       {t.name} — <Money cents={t.monthlyEquivalentCents} testId={`commitment-${t.templateId}-monthly`} />
                       /mo{' '}
-                      <span style={{ color: '#6b6a66' }}>
+                      <span style={{ color: 'var(--muted)' }}>
                         ({formatEur(t.amountCents)} every {t.intervalMonths} mo)
                       </span>
                     </li>
@@ -429,13 +494,7 @@ export function DashboardPage({ onOpenBudgets }: { onOpenBudgets: (month: string
             month && (
               <button
                 onClick={() => onOpenBudgets(month)}
-                style={{
-                  border: '1px solid #e4e4e1',
-                  background: 'transparent',
-                  borderRadius: 6,
-                  padding: '0.15rem 0.5rem',
-                  fontSize: '0.75rem',
-                }}
+                style={smallButton}
               >
                 Open Budgets
               </button>
@@ -470,7 +529,8 @@ function CategoryBars({ entries }: { entries: CategoryBreakdownEntry[] }) {
                 style={{
                   marginLeft: '0.4rem',
                   fontSize: '0.7rem',
-                  border: '1px solid #eda100',
+                  border: '1px solid var(--warn)',
+                  color: 'var(--warn)',
                   borderRadius: 4,
                   padding: '0 0.25rem',
                 }}
@@ -479,12 +539,12 @@ function CategoryBars({ entries }: { entries: CategoryBreakdownEntry[] }) {
               </span>
             )}
           </span>
-          <span style={{ background: '#f0f0ee', borderRadius: 4, height: 12 }}>
+          <span style={{ background: 'var(--track)', borderRadius: 4, height: 12 }}>
             <span
               style={{
                 display: 'block',
                 width: `${(Math.abs(entry.amountCents) / largest) * 100}%`,
-                background: entry.color ?? COLOR.spend,
+                background: entry.color ?? SPEND,
                 borderRadius: 4,
                 height: 12,
               }}
@@ -501,7 +561,7 @@ function CategoryBars({ entries }: { entries: CategoryBreakdownEntry[] }) {
 
 function BudgetCard({ budget }: { budget: BudgetVsActual }) {
   if (!budget.materialized) {
-    return <p style={{ fontSize: '0.85rem', color: '#6b6a66' }}>This month has no budget yet.</p>;
+    return <p style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>This month has no budget yet.</p>;
   }
   return (
     <>
@@ -520,7 +580,7 @@ function BudgetCard({ budget }: { budget: BudgetVsActual }) {
         </dd>
       </dl>
       {!budget.budgeted && (
-        <p style={{ fontSize: '0.75rem', color: '#6b6a66' }}>No category goals set for this month.</p>
+        <p style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>No category goals set for this month.</p>
       )}
       <ul style={{ listStyle: 'none', margin: 0, padding: 0, fontSize: '0.8rem' }}>
         {budget.lines.slice(0, 6).map((line) => (
@@ -533,7 +593,7 @@ function BudgetCard({ budget }: { budget: BudgetVsActual }) {
           >
             <span>
               {line.name}
-              {line.pending && <span style={{ color: '#6b6a66' }}> · pending</span>}
+              {line.pending && <span style={{ color: 'var(--muted)' }}> · pending</span>}
             </span>
             <span>
               {formatEur(line.actualCents)} / {formatEur(line.plannedCents)}
@@ -567,7 +627,7 @@ function ArchiveConfirm({
       aria-label={`Archive ${entry.name}`}
       data-testid="archive-confirm"
       style={{
-        border: '1px solid #d9d7d2',
+        border: '1px solid var(--border)',
         borderRadius: 4,
         padding: '0.6rem',
         marginTop: '0.5rem',
@@ -674,7 +734,7 @@ function AssetSnapshotCard({ month, onSaved }: { month: string; onSaved: () => P
 
   return (
     <Card title="Asset values" subtitle={month}>
-      <p style={{ fontSize: '0.75rem', color: '#6b6a66', marginTop: 0 }}>
+      <p style={{ fontSize: '0.75rem', color: 'var(--muted)', marginTop: 0 }}>
         Loans are entered as positive balances and subtracted in net worth.
       </p>
       <ul style={{ listStyle: 'none', margin: 0, padding: 0 }} data-testid="asset-entry">
@@ -687,9 +747,9 @@ function AssetSnapshotCard({ month, onSaved }: { month: string; onSaved: () => P
           >
             <label style={{ flex: 1, fontSize: '0.85rem' }}>
               {entry.name}
-              <span style={{ color: '#6b6a66' }}> · {entry.kind}</span>
+              <span style={{ color: 'var(--muted)' }}> · {entry.kind}</span>
               {entry.carriedForward && (
-                <span style={{ color: '#6b6a66', fontSize: '0.75rem' }}>
+                <span style={{ color: 'var(--muted)', fontSize: '0.75rem' }}>
                   {' '}
                   (carried from {entry.sourceMonth})
                 </span>
@@ -728,7 +788,7 @@ function AssetSnapshotCard({ month, onSaved }: { month: string; onSaved: () => P
         Save {month}
       </button>
       {status && (
-        <p role="status" style={{ fontSize: '0.75rem', color: '#6b6a66' }}>
+        <p role="status" style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>
           {status}
         </p>
       )}

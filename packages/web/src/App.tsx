@@ -34,7 +34,7 @@ export function App() {
               style={{
                 border: 'none',
                 background: view === v.id ? 'var(--accent)' : 'transparent',
-                color: view === v.id ? 'white' : 'inherit',
+                color: view === v.id ? 'var(--accent-contrast)' : 'inherit',
                 borderRadius: 6,
                 padding: '0.35rem 0.75rem',
               }}
