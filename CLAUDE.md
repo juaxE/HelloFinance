@@ -155,6 +155,49 @@ learned rules.
   import, that is the signal to revisit `(account_id, archive_id)` — which would cost
   the wrong-account detection, so it is a trade, not a free fix. Do not "harden" this
   pre-emptively.
+- The partial month is marked with a **hatch, never a fade**. Opacity cannot do this
+  job: holding a faded bar at the 3:1 non-text contrast floor needs alpha 0.92 on the
+  dark card and 1.00 on the light one, i.e. no fade at all. The hatch keeps the band
+  solid and stripes it with a lighter/darker shade of its own colour, so the signal
+  rides on neither hue nor luminance and survives greyscale and every CVD type.
+- Chart fills are checked numerically, not by eye: every fill AND its hatch stripe must
+  clear 3:1 against its own card, and no two bands in the spending stack may fall under
+  ΔE 10 in deuteranopia simulation. Both defects shipped once — dark blue/purple
+  converged at ΔE 7.6, and the light remainder grey sat at 2.82:1.
+- Flow aggregates (cash flow, income, spending, budget) mark the current month
+  `partial` and the dashboard excludes it from every window total — a flow accumulates
+  over a period, so the month in progress is an *incomplete* period, not a small one.
+  Net worth carries no such flag on purpose: a balance is a **stock**, complete at any
+  instant. `NetWorthPoint.partialAccounts` is a different thing entirely (an account
+  was not open yet) — do not conflate them.
+- Dashboard window figures are **sums over complete months, never averages**. An
+  average divides money, and division is confined to the commitments estimate with
+  pinned rounding. If a figure seems to want an average, it wants a sum with a clearer
+  label.
+- The spending trend charts the top N categories ranked over the window's **complete**
+  months only — ranking on a month in progress reshuffles the legend as the month
+  fills. Uncategorized is never ranked and never folded into the collapsed remainder:
+  it is the needs-review signal, not a small category.
+- Triage bulk-apply writes `category_source='rule'`, never `'manual'`, whenever a
+  labeling rule maps that key to the chosen category — the rows are rule-derived and
+  must follow a later correction to it. `manual` is the tempting shortcut and would
+  permanently exempt a whole counterparty's history from ever being corrected.
+- Triage only ever INSERTs a labeling rule, never UPDATEs one: both routes to an
+  update (`rememberRule` over an existing rule, or picking a different category) are
+  409s. Rewriting a rule also retroactively relabels rule-sourced rows outside the
+  triage view, and that blast radius belongs on the Rules screen where it is visible.
+- The relabel sweep in `routes/transactions.ts` filters `category_source='rule'` and
+  therefore *cannot* see uncategorized rows — `ck_transactions_category_source` forces
+  their source null. Do not "simplify" triage by routing it through that endpoint.
+- Playwright runs `workers: 1`: every spec shares one seeded `data/app.db` and several
+  mutate it. Parallel specs interleave with the ones asserting the DOM against a
+  freshly-fetched API figure, which is a race, not a flake to retry away.
+- A running `npm run dev` server **hijacks the e2e suite**: `reuseExistingServer`
+  adopts whatever answers on :3001 without applying the config's `FINANCE_NOW`, and
+  that process keeps an open handle to the `data/app.db` that `seed:test` unlinked —
+  so the suite runs unpinned against a stale database and fails far from the cause.
+  The `setup` project asserts the server's month before anything else runs; never
+  delete that gate, and stop the dev server before running e2e.
 - Archived assets stay in net-worth queries — excluding them rewrites history.
   Retire an asset by entering a closing `0` snapshot, *then* archiving.
 - `Transfer` and `Income` cannot be deleted, renamed, archived, or have
@@ -239,3 +282,18 @@ Split transactions, transaction-level reimbursement linking, sinking funds, budg
 rollover, income budgeting, live investment pricing, multi-currency, additional bank
 adapters, automatic transfer pair-matching, hierarchical categories, desktop
 packaging, Windows support, auth.
+
+Deferred with triage: bulk actions across several groups at once; undo beyond the
+last apply, or persisted across reloads; editing `BRAND_KEYS` from the UI when
+grouping is wrong. The seeded fixtures already demonstrate that last gap —
+`stripTrailingProcessorToken` only strips a trailing `*`-segment containing a digit,
+so `PAYPAL *SPOTIFY*P1DXYSB` normalizes to `SPOTIFY` while `PAYPAL *SPOTIFY*PAYSCU`
+does not, and Spotify shows up as one group of 10 plus two singletons. Loosening the
+digit rule risks eating real counterparty words, so it needs its own proposal.
+
+**Open decision (owner-deferred 2026-07-19):** whether post-commit triage replaces
+the pre-commit review screen. Both ship and coexist; the call gets made after living
+with triage. Until then `ReviewScreen`/`GroupCard` and the staged-group API stay, and
+the same labeling decision is reachable from two places with different
+`category_source` semantics — that duplication is known and accepted, not an
+oversight to tidy away.

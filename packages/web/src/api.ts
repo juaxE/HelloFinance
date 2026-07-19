@@ -8,16 +8,16 @@ import type {
   BudgetLineCreate,
   BudgetLinePatch,
   BudgetMonth,
-  BudgetVsActual,
+  BudgetTrendPoint,
   CashFlowPoint,
   Category,
-  CategoryBreakdownEntry,
+  CategoryTrend,
   CommitRequest,
   CommitResult,
   ExtendHistoryResult,
   GroupPatch,
   ImportDetail,
-  IncomeBreakdown,
+  IncomePoint,
   LabelingRule,
   LabelingRulePatch,
   NetWorthPoint,
@@ -30,6 +30,11 @@ import type {
   Transaction,
   TransactionPatch,
   TransactionPatchResult,
+  TriageApplyResult,
+  TriageCount,
+  TriageGroupApply,
+  TriageQueue,
+  TriageUndoResult,
   UncreatedBudgetMonth,
 } from '@finance/shared';
 
@@ -102,6 +107,24 @@ export const api = {
     request<TransactionPatchResult>(`/transactions/${id}`, {
       method: 'PATCH',
       body: JSON.stringify(patch),
+    }),
+
+  // --- Triage --------------------------------------------------------------
+
+  getTriageQueue: () => request<TriageQueue>('/transactions/uncategorized'),
+
+  getTriageCount: () => request<TriageCount>('/transactions/uncategorized/count'),
+
+  applyTriageGroup: (body: TriageGroupApply) =>
+    request<TriageApplyResult>('/transactions/triage/group', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  undoTriageApply: (undoToken: string) =>
+    request<TriageUndoResult>('/transactions/triage/undo', {
+      method: 'POST',
+      body: JSON.stringify({ undoToken }),
     }),
 
   listLabelingRules: () => request<LabelingRule[]>('/labeling-rules'),
@@ -191,13 +214,16 @@ export const api = {
 
   getCashFlow: (window: number) => request<CashFlowPoint[]>(`/dashboard/cash-flow?window=${window}`),
 
-  getIncome: (month: string) => request<IncomeBreakdown>(`/dashboard/income?month=${month}`),
+  // The dashboard charts the trends; the `?month=` forms remain the per-month
+  // primitives the trends compose (and where criterion 5's tie-out is asserted).
+  getIncomeTrend: (window: number) =>
+    request<IncomePoint[]>(`/dashboard/income-trend?window=${window}`),
 
-  getCategoryBreakdown: (month: string) =>
-    request<CategoryBreakdownEntry[]>(`/dashboard/categories?month=${month}`),
+  getCategoryTrend: (window: number) =>
+    request<CategoryTrend>(`/dashboard/category-trend?window=${window}`),
 
-  getBudgetVsActual: (month: string) =>
-    request<BudgetVsActual>(`/dashboard/budget-vs-actual?month=${month}`),
+  getBudgetTrend: (window: number) =>
+    request<BudgetTrendPoint[]>(`/dashboard/budget-trend?window=${window}`),
 
   getRecurringCommitments: () =>
     request<RecurringCommitments>('/dashboard/recurring-commitments'),

@@ -52,7 +52,7 @@ export function registerTransactionRoutes(app: FastifyInstance, db: Db): void {
     // itself is a direct user choice → 'manual' (always wins over any rule on
     // future imports — non-negotiable #4). See spec 002 "Relabeling".
     let relabeledCount = 0;
-    if (patch.categoryId !== undefined && patch.scope === 'update_rule') {
+    if (patch.categoryId !== undefined && patch.categoryId !== null && patch.scope === 'update_rule') {
       const targetNormalized = normalizeCounterparty(existing.counterparty);
       await db
         .insert(labelingRules)
@@ -88,9 +88,11 @@ export function registerTransactionRoutes(app: FastifyInstance, db: Db): void {
     const [row] = await db
       .update(transactions)
       .set({
+        // Both columns move together — `ck_transactions_category_source` requires
+        // a row to be fully categorized or fully uncategorized.
         ...(patch.categoryId !== undefined && {
           categoryId: patch.categoryId,
-          categorySource: 'manual' as const,
+          categorySource: patch.categoryId === null ? null : ('manual' as const),
         }),
         ...('note' in patch && { note: patch.note }),
         updatedAt: new Date(),

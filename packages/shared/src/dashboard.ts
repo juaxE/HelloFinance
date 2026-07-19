@@ -74,6 +74,61 @@ export type CashFlowPoint = {
   /** A positive magnitude; reimbursement positives net it DOWN. */
   expensesCents: number;
   netCents: number;
+  /** See `partial` below — the current month is still accumulating. */
+  partial: boolean;
+};
+
+// --- Flow trends ------------------------------------------------------------
+
+/**
+ * A flow aggregate accumulates OVER a period, so the month in progress is not a
+ * smaller version of a finished one — it is an incomplete one, and showing it
+ * beside complete months as though it were comparable is a lie. Every flow
+ * trend therefore marks it `partial`, and the UI must render it distinctly and
+ * keep it out of any headline figure.
+ *
+ * Net worth carries no such flag on purpose: a balance is a STOCK and is a
+ * complete answer at any instant. `NetWorthPoint.partialAccounts` means
+ * something else entirely (an account was not open yet).
+ */
+export type IncomePoint = {
+  month: string;
+  salaryCents: number;
+  otherIncomeCents: number;
+  partial: boolean;
+};
+
+/** How many categories the spending trend charts before collapsing the rest. */
+export const TOP_SPENDING_CATEGORIES = 5;
+
+export type CategoryTrendSeries = {
+  /** A category id, `null` for Uncategorized, `'rest'` for the collapsed remainder. */
+  key: number | null | 'rest';
+  name: string;
+  color: string | null;
+  /** One positive magnitude per entry in `months`, same order. */
+  amountsCents: number[];
+};
+
+export type CategoryTrend = {
+  months: { month: string; partial: boolean }[];
+  /**
+   * The largest `TOP_SPENDING_CATEGORIES` over the window's COMPLETE months,
+   * then `rest`. Uncategorized is always its own series and is never ranked or
+   * collapsed — it is the needs-review signal, not a small category.
+   */
+  series: CategoryTrendSeries[];
+};
+
+export type BudgetTrendPoint = {
+  month: string;
+  materialized: boolean;
+  budgeted: boolean;
+  plannedCents: number;
+  actualCents: number;
+  /** Ties out to the cash-flow endpoint's `expensesCents` for the month. */
+  expenseCents: number;
+  partial: boolean;
 };
 
 // --- Income sources ---------------------------------------------------------
