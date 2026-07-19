@@ -346,6 +346,14 @@ consistent with the existing code; none changes a behavior the spec pins.
   ordering, which is out of scope here.
 - Drill-down from a chart into the underlying transaction list (already listed
   as deferred below).
+- **`fixtures/generate.mjs` normalizes commitments in floating point.**
+  `recurringCommitments()` uses `Math.round(Math.abs(cents) / intervalMonths)`
+  while the server uses the pinned integer `roundHalfUpAwayFromZero`. Harmless
+  today because every `SEEDED_TEMPLATES` amount divides evenly, so the two agree
+  exactly — but a future template with a non-divisible amount would make the
+  fixture and the server disagree by a cent, and the criterion 6 test would fail
+  pointing at the server rather than at the generator. Port the integer helper
+  into the generator before adding such a template.
 
 ## Deferred (needs a new approved spec)
 
