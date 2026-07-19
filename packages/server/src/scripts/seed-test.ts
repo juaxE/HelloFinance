@@ -30,6 +30,7 @@ import { runMigrations } from '../db/migrate';
 import { accounts } from '../db/schema';
 import { analyzeImport, commitImport } from '../import/pipeline';
 import { FIXTURE_EXPECTATIONS as expected, seedAssets, seedRule, seedTemplates } from './seed-data';
+import { assertSeedableDatabase, markSyntheticSeed } from './seed-guard';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURES_ROOT = resolve(HERE, '../../../../fixtures');
@@ -46,9 +47,13 @@ function loadFixture(relPath: string): Buffer {
 }
 
 function main(): void {
+  // Only a DB this script itself created may be overwritten — the real DB has
+  // no marker and makes this throw (audit B2; see seed-guard.ts).
+  assertSeedableDatabase(DATABASE_PATH);
   resetDatabaseFile(DATABASE_PATH);
   const db = createDb(DATABASE_PATH);
   runMigrations(db);
+  markSyntheticSeed(db);
 
   const mainAccount = db
     .insert(accounts)
