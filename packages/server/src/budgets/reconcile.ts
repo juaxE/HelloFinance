@@ -154,9 +154,14 @@ export function reconcileMonth(db: Db, budgetId: number, month: string): Reconci
     actualByLine.set(line.id, expenseMagnitude(rows));
   }
 
-  // Step 3 — categorized remainder with no line at all is unbudgeted.
-  // A category with an explicit 0 envelope has a line, so it reconciles against
-  // that line as overspend and is deliberately NOT unbudgeted (criterion 21).
+  // Step 3 — categorized remainder in a category with no ENVELOPE is unbudgeted.
+  // Keyed on the absence of an envelope, NOT of any line: a category holding only
+  // a named line (a Spotify line in Subscriptions) would otherwise count as
+  // having "a line", and its other remaining spend (a Netflix charge) would fall
+  // into no bucket at all — breaking the partition every tie-out rests on. So a
+  // category can appear under Unbudgeted while still showing a named line.
+  // A category with an explicit 0 envelope HAS an envelope, so it reconciles
+  // against that line as overspend and is deliberately NOT unbudgeted.
   const unbudgetedByCategory = new Map<number, number>();
   for (const t of remaining) {
     if (t.categoryId === null) continue;

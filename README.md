@@ -1,8 +1,9 @@
 # HelloFinance
 
 Local-first personal finance tracker (single user, EUR only, S-Pankki CSV imports).
-See [CLAUDE.md](./CLAUDE.md) for the binding constraints and workflow, and
-[`specs/`](./specs) for feature specifications (the source of truth for behavior).
+See [CLAUDE.md](./CLAUDE.md) for the binding constraints, domain overview and
+workflow. Behavior is specified by the test suite: tests are named after the
+acceptance criterion they prove.
 
 ## Requirements
 
@@ -16,7 +17,6 @@ packages/
   server/   # @finance/server — Fastify (127.0.0.1 only), SQLite + Drizzle
   web/      # @finance/web    — Vite + React
 fixtures/   # synthetic S-Pankki data + expected.json (never real data)
-specs/      # numbered feature specs
 ```
 
 ## Commands (run from repo root)
