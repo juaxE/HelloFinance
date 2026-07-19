@@ -282,3 +282,18 @@ Split transactions, transaction-level reimbursement linking, sinking funds, budg
 rollover, income budgeting, live investment pricing, multi-currency, additional bank
 adapters, automatic transfer pair-matching, hierarchical categories, desktop
 packaging, Windows support, auth.
+
+Deferred with triage: bulk actions across several groups at once; undo beyond the
+last apply, or persisted across reloads; editing `BRAND_KEYS` from the UI when
+grouping is wrong. The seeded fixtures already demonstrate that last gap —
+`stripTrailingProcessorToken` only strips a trailing `*`-segment containing a digit,
+so `PAYPAL *SPOTIFY*P1DXYSB` normalizes to `SPOTIFY` while `PAYPAL *SPOTIFY*PAYSCU`
+does not, and Spotify shows up as one group of 10 plus two singletons. Loosening the
+digit rule risks eating real counterparty words, so it needs its own proposal.
+
+**Open decision (owner-deferred 2026-07-19):** whether post-commit triage replaces
+the pre-commit review screen. Both ship and coexist; the call gets made after living
+with triage. Until then `ReviewScreen`/`GroupCard` and the staged-group API stay, and
+the same labeling decision is reachable from two places with different
+`category_source` semantics — that duplication is known and accepted, not an
+oversight to tidy away.
