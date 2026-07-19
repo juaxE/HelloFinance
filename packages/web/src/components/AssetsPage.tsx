@@ -68,12 +68,15 @@ export function AssetsPage() {
       .catch((e) => setError(e instanceof Error ? e.message : 'failed to load assets'));
   }, [loadMonth, load]);
 
-  async function run(work: () => Promise<void>) {
+  /** Reports whether the work succeeded — callers that clear a form need to know. */
+  async function run(work: () => Promise<void>): Promise<boolean> {
     setError(null);
     try {
       await work();
+      return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : 'something went wrong');
+      return false;
     }
   }
 
@@ -243,7 +246,7 @@ export function AssetsPage() {
   );
 }
 
-function AddAssetForm({ onCreate }: { onCreate: (name: string, kind: AssetKind) => Promise<void> }) {
+function AddAssetForm({ onCreate }: { onCreate: (name: string, kind: AssetKind) => Promise<boolean> }) {
   const [name, setName] = useState('');
   const [kind, setKind] = useState<AssetKind>('investment');
   const [busy, setBusy] = useState(false);
@@ -253,9 +256,11 @@ function AddAssetForm({ onCreate }: { onCreate: (name: string, kind: AssetKind) 
     if (name.trim() === '') return;
     setBusy(true);
     try {
-      await onCreate(name.trim(), kind);
-      setName('');
-      setKind('investment');
+      // Only clear on success — wiping a rejected name makes the user retype it.
+      if (await onCreate(name.trim(), kind)) {
+        setName('');
+        setKind('investment');
+      }
     } finally {
       setBusy(false);
     }

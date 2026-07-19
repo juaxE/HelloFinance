@@ -37,8 +37,8 @@ import { api } from '../api';
  * The flow cards — income, spending, budget — are TRENDS, not single months.
  * A flow accumulates over a period, so the month in progress is an incomplete
  * period rather than a small one; showing it alone invited reading a half-lived
- * month as a bad month. It is charted at reduced opacity and excluded from
- * every window total. Net worth is exempt because a balance is a stock and is
+ * month as a bad month. It is HATCHED (never faded — see HATCH_MIX) and
+ * excluded from every window total. Net worth is exempt because a balance is a stock and is
  * complete at any instant.
  */
 
@@ -773,9 +773,14 @@ function SpendingTrend({
   const windowTotal = trend.series.reduce((sum, s) => sum + completeSum(s), 0);
   // Uncategorized keeps its needs-review billing here: it is a distinct state
   // from the reviewed catch-all, and the queue that resolves it is one click away.
-  const uncategorizedTotal = trend.series
-    .filter((s) => s.key === null)
-    .reduce((sum, s) => sum + completeSum(s), 0);
+  const uncategorized = trend.series.filter((s) => s.key === null);
+  const uncategorizedComplete = uncategorized.reduce((sum, s) => sum + completeSum(s), 0);
+  // Gated on the WHOLE window, partial month included — NOT on the figure above.
+  // A mid-month import puts every uncategorized row in the month in progress, and
+  // a needs-review signal that disappears exactly when the backlog is newest is
+  // worse than no signal. The amount shown still excludes the partial month,
+  // because it is quoted as a share of a window total that excludes it.
+  const hasUncategorized = uncategorized.some((s) => s.amountsCents.some((c) => c !== 0));
 
   return (
     <>
@@ -822,10 +827,16 @@ function SpendingTrend({
           ))}
         </BarChart>
       </ResponsiveContainer>
-      {uncategorizedTotal !== 0 && (
+      {hasUncategorized && (
         <p style={{ fontSize: '0.8rem', margin: '0.25rem 0 0' }} data-testid="spending-needs-review">
-          <Money cents={uncategorizedTotal} testId="spending-uncategorized" /> of this is
-          uncategorized and needs review.{' '}
+          {uncategorizedComplete !== 0 ? (
+            <>
+              <Money cents={uncategorizedComplete} testId="spending-uncategorized" /> of this is
+              uncategorized and needs review.
+            </>
+          ) : (
+            <>Uncategorized spending sits only in the month in progress, outside the total above. It still needs review.</>
+          )}{' '}
           <button onClick={onOpenTriage} style={{ ...smallButton, marginLeft: '0.25rem' }}>
             Sort it out
           </button>

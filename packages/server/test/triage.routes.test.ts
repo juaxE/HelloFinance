@@ -351,8 +351,8 @@ describe('against the seeded fixtures', () => {
     const beforeGroceries = before.find((e) => e.categoryId === groceries.id)?.amountCents ?? 0;
 
     // The ALEPA rows inside this month — the amount that should change hands.
-    // `categoryBreakdown` reports expense MAGNITUDES (it negates at
-    // aggregates.ts:187), so this is compared as a positive number.
+    // `categoryBreakdown` reports expense MAGNITUDES (it negates each amount),
+    // so this is compared as a positive number.
     const alepaMagnitude = -fixtureDb
       .select()
       .from(transactions)
