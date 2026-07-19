@@ -146,6 +146,15 @@ learned rules.
   never delete once materialized — past months are history.
 - No uniqueness constraint on `content_hash` — two identical purchases the same day
   are legal; `archive_id` is the dedup key.
+- `uq_transactions_archive_id` is **global, not per-account**, on purpose: it makes a
+  CSV imported into the wrong account surface as duplicates instead of silently
+  double-importing. This rests on an **unverified assumption** (owner-accepted
+  2026-07-16) that S-Pankki `Arkistointitunnus` is unique across *all* of the owner's
+  accounts, not just within one — unprovable here, since no real export may enter
+  tests or agent context. If a genuine cross-account collision ever shows up in a real
+  import, that is the signal to revisit `(account_id, archive_id)` — which would cost
+  the wrong-account detection, so it is a trade, not a free fix. Do not "harden" this
+  pre-emptively.
 - Archived assets stay in net-worth queries — excluding them rewrites history.
   Retire an asset by entering a closing `0` snapshot, *then* archiving.
 - `Transfer` and `Income` cannot be deleted, renamed, archived, or have
