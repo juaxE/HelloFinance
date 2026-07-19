@@ -155,6 +155,20 @@ learned rules.
   import, that is the signal to revisit `(account_id, archive_id)` — which would cost
   the wrong-account detection, so it is a trade, not a free fix. Do not "harden" this
   pre-emptively.
+- Flow aggregates (cash flow, income, spending, budget) mark the current month
+  `partial` and the dashboard excludes it from every window total — a flow accumulates
+  over a period, so the month in progress is an *incomplete* period, not a small one.
+  Net worth carries no such flag on purpose: a balance is a **stock**, complete at any
+  instant. `NetWorthPoint.partialAccounts` is a different thing entirely (an account
+  was not open yet) — do not conflate them.
+- Dashboard window figures are **sums over complete months, never averages**. An
+  average divides money, and division is confined to the commitments estimate with
+  pinned rounding. If a figure seems to want an average, it wants a sum with a clearer
+  label.
+- The spending trend charts the top N categories ranked over the window's **complete**
+  months only — ranking on a month in progress reshuffles the legend as the month
+  fills. Uncategorized is never ranked and never folded into the collapsed remainder:
+  it is the needs-review signal, not a small category.
 - Triage bulk-apply writes `category_source='rule'`, never `'manual'`, whenever a
   labeling rule maps that key to the chosen category — the rows are rule-derived and
   must follow a later correction to it. `manual` is the tempting shortcut and would

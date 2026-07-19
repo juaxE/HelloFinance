@@ -3,6 +3,7 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  Cell,
   Legend,
   Line,
   LineChart,
@@ -14,10 +15,10 @@ import {
 import {
   formatEur,
   type AssetSnapshotEntry,
-  type BudgetVsActual,
+  type BudgetTrendPoint,
   type CashFlowPoint,
-  type CategoryBreakdownEntry,
-  type IncomeBreakdown,
+  type CategoryTrend,
+  type IncomePoint,
   type NetWorthPoint,
   type RecurringCommitments,
 } from '@finance/shared';
@@ -34,6 +35,13 @@ import { parseEurosToCents } from '../format';
  * integer cents in a `data-cents` attribute, so the Playwright tie-out compares
  * at the CENTS level rather than string-matching the output of the same
  * formatter the UI used, which would be a tautology.
+ *
+ * The flow cards — income, spending, budget — are TRENDS, not single months.
+ * A flow accumulates over a period, so the month in progress is an incomplete
+ * period rather than a small one; showing it alone invited reading a half-lived
+ * month as a bad month. It is charted at reduced opacity and excluded from
+ * every window total. Net worth is exempt because a balance is a stock and is
+ * complete at any instant.
  */
 
 // Series colors from the validated categorical order. Loans additionally use a
@@ -50,6 +58,10 @@ const SERIES = {
     income: '#2a78d6',
     expenses: '#eb6834',
     net: '#4a3aa7',
+    salary: '#2a78d6',
+    otherIncome: '#00767a',
+    planned: '#9a9a96',
+    actual: '#2a78d6',
   },
   dark: {
     accounts: '#6ea1ff',
@@ -59,11 +71,32 @@ const SERIES = {
     income: '#6ea1ff',
     expenses: '#ff9a6b',
     net: '#9c8ff0',
+    salary: '#6ea1ff',
+    otherIncome: '#4fb3b8',
+    planned: '#6d6d6d',
+    actual: '#6ea1ff',
   },
 } as const;
 
-/** The category bar fill: a filled swatch, so one value reads on both themes. */
-const SPEND = '#2a78d6';
+/**
+ * The stacked spending bands, assigned by RANK rather than from each category's
+ * own `color`.
+ *
+ * The single-month bar list uses the category's colour, which is fine when one
+ * bar per row never needs two colours to be told apart. A stack does: adjacent
+ * bands must separate, and user-chosen colours carry no such guarantee. The
+ * last two slots are fixed — the collapsed remainder reads as neutral grey, and
+ * Uncategorized keeps the same amber it wears everywhere else as needs-review.
+ */
+const SPEND_PALETTE = {
+  light: ['#2a78d6', '#008300', '#eb6834', '#4a3aa7', '#00767a'],
+  dark: ['#6ea1ff', '#4bb54b', '#ff9a6b', '#9c8ff0', '#4fb3b8'],
+} as const;
+const REST_COLOR = { light: '#9a9a96', dark: '#6d6d6d' } as const;
+const UNCATEGORIZED_COLOR = { light: '#a76a00', dark: '#e0a33a' } as const;
+
+/** The month in progress, drawn through but faded. */
+const PARTIAL_OPACITY = 0.35;
 
 const WINDOWS = [3, 6, 9, 12] as const;
 
@@ -138,13 +171,7 @@ function Card({
   );
 }
 
-function WindowSelector({
-  value,
-  onChange,
-}: {
-  value: number;
-  onChange: (n: number) => void;
-}) {
+function WindowSelector({ value, onChange }: { value: number; onChange: (n: number) => void }) {
   return (
     <div role="group" aria-label="Trend window" style={{ display: 'flex', gap: '0.25rem' }}>
       {WINDOWS.map((w) => (
@@ -168,7 +195,28 @@ function WindowSelector({
 const euroAxis = (cents: number): string => `${Math.round(cents / 100)}`;
 const tooltipFormatter = (value: number, name: string): [string, string] => [formatEur(value), name];
 
-export function DashboardPage({ onOpenBudgets }: { onOpenBudgets: (month: string) => void }) {
+/**
+ * The window figure for a flow card: a SUM over the complete months, never an
+ * average. Averaging would divide money, and division is confined to the
+ * commitments estimate with pinned rounding (CLAUDE.md); every other cent
+ * figure in the app is exact integer arithmetic.
+ */
+function completeTotal<T extends { partial: boolean }>(points: T[], value: (p: T) => number): number {
+  return points.filter((p) => !p.partial).reduce((sum, p) => sum + value(p), 0);
+}
+
+function partialNote(months: { month: string; partial: boolean }[]): string | undefined {
+  const partial = months.find((m) => m.partial);
+  return partial ? `${partial.month} still in progress — excluded from the total` : undefined;
+}
+
+export function DashboardPage({
+  onOpenBudgets,
+  onOpenTriage,
+}: {
+  onOpenBudgets: () => void;
+  onOpenTriage: () => void;
+}) {
   const theme = usePrefersDark() ? 'dark' : 'light';
   const series = SERIES[theme];
   const chrome = CHROME[theme];
@@ -176,17 +224,17 @@ export function DashboardPage({ onOpenBudgets }: { onOpenBudgets: (month: string
   const [showBreakdown, setShowBreakdown] = useState(false);
   const [netWorth, setNetWorth] = useState<NetWorthPoint[]>([]);
   const [cashFlow, setCashFlow] = useState<CashFlowPoint[]>([]);
-  const [income, setIncome] = useState<IncomeBreakdown | null>(null);
-  const [breakdown, setBreakdown] = useState<CategoryBreakdownEntry[]>([]);
-  const [budget, setBudget] = useState<BudgetVsActual | null>(null);
+  const [income, setIncome] = useState<IncomePoint[]>([]);
+  const [spending, setSpending] = useState<CategoryTrend | null>(null);
+  const [budget, setBudget] = useState<BudgetTrendPoint[]>([]);
   const [commitments, setCommitments] = useState<RecurringCommitments | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   /**
    * The current month comes from the SERVER (the commitments endpoint reports
-   * the month it used), never from the browser clock — otherwise a pinned server
-   * "today" and the browser's real one would disagree about which month the
-   * "month to date" cards are showing.
+   * the month it used), never from the browser clock. Only the asset-snapshot
+   * form needs it now — that is a write surface for this month, and a snapshot
+   * is a stock, so "this month" is the right and only target.
    */
   const month = commitments?.month ?? null;
 
@@ -198,38 +246,27 @@ export function DashboardPage({ onOpenBudgets }: { onOpenBudgets: (month: string
    * would then disagree with the API for the selected window (validation §6).
    */
   const trendsReq = useRef(0);
-  const monthReq = useRef(0);
 
   const loadTrends = useCallback(async (w: number) => {
     const seq = ++trendsReq.current;
     try {
-      const [nw, cf] = await Promise.all([api.getNetWorth(w), api.getCashFlow(w)]);
+      const [nw, cf, inc, cats, bud] = await Promise.all([
+        api.getNetWorth(w),
+        api.getCashFlow(w),
+        api.getIncomeTrend(w),
+        api.getCategoryTrend(w),
+        api.getBudgetTrend(w),
+      ]);
       if (seq !== trendsReq.current) return;
       setNetWorth(nw);
       setCashFlow(cf);
+      setIncome(inc);
+      setSpending(cats);
+      setBudget(bud);
       setError(null);
     } catch (e) {
       if (seq !== trendsReq.current) return;
       setError(e instanceof Error ? e.message : 'failed to load the trends');
-    }
-  }, []);
-
-  const loadMonth = useCallback(async (target: string) => {
-    const seq = ++monthReq.current;
-    try {
-      const [inc, cats, bva] = await Promise.all([
-        api.getIncome(target),
-        api.getCategoryBreakdown(target),
-        api.getBudgetVsActual(target),
-      ]);
-      if (seq !== monthReq.current) return;
-      setIncome(inc);
-      setBreakdown(cats);
-      setBudget(bva);
-      setError(null);
-    } catch (e) {
-      if (seq !== monthReq.current) return;
-      setError(e instanceof Error ? e.message : 'failed to load the month');
     }
   }, []);
 
@@ -244,13 +281,9 @@ export function DashboardPage({ onOpenBudgets }: { onOpenBudgets: (month: string
     void loadTrends(window_);
   }, [window_, loadTrends]);
 
-  useEffect(() => {
-    if (month === null) return;
-    void loadMonth(month);
-  }, [month, loadMonth]);
-
   const partialMonths = netWorth.filter((p) => p.partialAccounts).map((p) => p.month);
   const latest = netWorth.at(-1);
+  const windowLabel = `${window_} months`;
 
   return (
     <div data-testid="dashboard">
@@ -259,6 +292,18 @@ export function DashboardPage({ onOpenBudgets }: { onOpenBudgets: (month: string
           {error}
         </p>
       )}
+
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '0.75rem',
+          marginBottom: '1rem',
+        }}
+      >
+        <span style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>Trend window</span>
+        <WindowSelector value={window_} onChange={setWindow} />
+      </div>
 
       <div
         style={{
@@ -276,16 +321,9 @@ export function DashboardPage({ onOpenBudgets }: { onOpenBudgets: (month: string
                 : undefined
             }
             actions={
-              <>
-                <button
-                  onClick={() => setShowBreakdown((s) => !s)}
-                  aria-pressed={showBreakdown}
-                  style={{ ...smallButton, marginRight: '0.5rem' }}
-                >
-                  Breakdown
-                </button>
-                <WindowSelector value={window_} onChange={setWindow} />
-              </>
+              <button onClick={() => setShowBreakdown((s) => !s)} aria-pressed={showBreakdown} style={smallButton}>
+                Breakdown
+              </button>
             }
           >
             {latest && (
@@ -330,7 +368,7 @@ export function DashboardPage({ onOpenBudgets }: { onOpenBudgets: (month: string
                     stroke={series.accounts}
                     strokeWidth={2}
                     dot={false}
-                  isAnimationActive={false}
+                    isAnimationActive={false}
                   />
                 )}
                 {showBreakdown && (
@@ -341,7 +379,7 @@ export function DashboardPage({ onOpenBudgets }: { onOpenBudgets: (month: string
                     stroke={series.investments}
                     strokeWidth={2}
                     dot={false}
-                  isAnimationActive={false}
+                    isAnimationActive={false}
                   />
                 )}
                 {showBreakdown && (
@@ -353,7 +391,7 @@ export function DashboardPage({ onOpenBudgets }: { onOpenBudgets: (month: string
                     strokeWidth={2}
                     strokeDasharray="5 3"
                     dot={false}
-                  isAnimationActive={false}
+                    isAnimationActive={false}
                   />
                 )}
               </LineChart>
@@ -376,7 +414,12 @@ export function DashboardPage({ onOpenBudgets }: { onOpenBudgets: (month: string
         </div>
 
         <div style={{ gridColumn: '1 / -1' }}>
-          <Card title="Cash flow" subtitle="transfers excluded">
+          <Card
+            title="Cash flow"
+            subtitle={[windowLabel, 'transfers excluded', partialNote(cashFlow)]
+              .filter(Boolean)
+              .join(' · ')}
+          >
             <ResponsiveContainer width="100%" height={220}>
               <BarChart data={cashFlow} margin={{ top: 4, right: 8, bottom: 0, left: 8 }}>
                 <CartesianGrid stroke={chrome.grid} vertical={false} />
@@ -397,14 +440,22 @@ export function DashboardPage({ onOpenBudgets }: { onOpenBudgets: (month: string
                   labelStyle={{ color: chrome.tooltipText }}
                 />
                 <Legend wrapperStyle={{ fontSize: 12 }} />
-                <Bar dataKey="incomeCents" name="Income" fill={series.income} radius={[4, 4, 0, 0]} isAnimationActive={false} />
+                <Bar dataKey="incomeCents" name="Income" fill={series.income} radius={[4, 4, 0, 0]} isAnimationActive={false}>
+                  {cashFlow.map((p) => (
+                    <Cell key={p.month} fill={series.income} fillOpacity={p.partial ? PARTIAL_OPACITY : 1} />
+                  ))}
+                </Bar>
                 <Bar
                   dataKey="expensesCents"
                   name="Expenses"
                   fill={series.expenses}
                   radius={[4, 4, 0, 0]}
                   isAnimationActive={false}
-                />
+                >
+                  {cashFlow.map((p) => (
+                    <Cell key={p.month} fill={series.expenses} fillOpacity={p.partial ? PARTIAL_OPACITY : 1} />
+                  ))}
+                </Bar>
                 <Line
                   type="monotone"
                   dataKey="netCents"
@@ -424,30 +475,73 @@ export function DashboardPage({ onOpenBudgets }: { onOpenBudgets: (month: string
                   data-income={p.incomeCents}
                   data-expenses={p.expensesCents}
                   data-net={p.netCents}
+                  data-partial={String(p.partial)}
                 />
               ))}
             </ul>
           </Card>
         </div>
 
-        <Card title="Income sources" subtitle={month ? `${month} — month to date` : undefined}>
-          {income && (
-            <>
-              <dl style={{ margin: 0, display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '0.35rem 1rem' }}>
-                <dt>Salary</dt>
-                <dd style={{ margin: 0, textAlign: 'right' }}>
-                  <Money cents={income.salaryCents} testId="income-salary" />
-                </dd>
-                <dt>Other income</dt>
-                <dd style={{ margin: 0, textAlign: 'right' }}>
-                  <Money cents={income.otherIncomeCents} testId="income-other" />
-                </dd>
-              </dl>
-              <p style={{ fontSize: '0.75rem', color: 'var(--muted)', marginBottom: 0 }}>
-                Reimbursements are not income — they reduce the category they sit in.
-              </p>
-            </>
-          )}
+        <Card
+          title="Income sources"
+          subtitle={[windowLabel, partialNote(income)].filter(Boolean).join(' · ')}
+        >
+          <p style={{ fontSize: '1.3rem', margin: '0 0 0.5rem' }}>
+            <Money cents={completeTotal(income, (p) => p.salaryCents + p.otherIncomeCents)} testId="income-total" />
+            <span style={{ fontSize: '0.8rem', color: 'var(--muted)' }}> total</span>
+          </p>
+          <ResponsiveContainer width="100%" height={180}>
+            <BarChart data={income} margin={{ top: 4, right: 8, bottom: 0, left: 8 }}>
+              <CartesianGrid stroke={chrome.grid} vertical={false} />
+              <XAxis dataKey="month" tick={{ fontSize: 11, fill: chrome.axis }} stroke={chrome.axis} />
+              <YAxis
+                tickFormatter={euroAxis}
+                tick={{ fontSize: 11, fill: chrome.axis }}
+                stroke={chrome.axis}
+                width={56}
+              />
+              <Tooltip
+                formatter={tooltipFormatter}
+                contentStyle={{
+                  background: chrome.tooltipBg,
+                  border: `1px solid ${chrome.axis}`,
+                  borderRadius: 6,
+                }}
+                labelStyle={{ color: chrome.tooltipText }}
+              />
+              <Legend wrapperStyle={{ fontSize: 12 }} />
+              <Bar dataKey="salaryCents" stackId="income" name="Salary" fill={series.salary} isAnimationActive={false}>
+                {income.map((p) => (
+                  <Cell key={p.month} fill={series.salary} fillOpacity={p.partial ? PARTIAL_OPACITY : 1} />
+                ))}
+              </Bar>
+              <Bar
+                dataKey="otherIncomeCents"
+                stackId="income"
+                name="Other income"
+                fill={series.otherIncome}
+                isAnimationActive={false}
+              >
+                {income.map((p) => (
+                  <Cell key={p.month} fill={series.otherIncome} fillOpacity={p.partial ? PARTIAL_OPACITY : 1} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+          <p style={{ fontSize: '0.75rem', color: 'var(--muted)', marginBottom: 0 }}>
+            Reimbursements are not income — they reduce the category they sit in.
+          </p>
+          <ul hidden data-testid="income-series">
+            {income.map((p) => (
+              <li
+                key={p.month}
+                data-month={p.month}
+                data-salary={p.salaryCents}
+                data-other={p.otherIncomeCents}
+                data-partial={String(p.partial)}
+              />
+            ))}
+          </ul>
         </Card>
 
         <Card title="Recurring commitments" subtitle="estimate">
@@ -482,27 +576,108 @@ export function DashboardPage({ onOpenBudgets }: { onOpenBudgets: (month: string
         </Card>
 
         <div style={{ gridColumn: '1 / -1' }}>
-          <Card title="Spending by category" subtitle={month ? `${month} — month to date` : undefined}>
-            <CategoryBars entries={breakdown} />
+          <Card
+            title="Spending by category"
+            subtitle={[windowLabel, spending && partialNote(spending.months)].filter(Boolean).join(' · ')}
+          >
+            {spending && (
+              <SpendingTrend
+                trend={spending}
+                theme={theme}
+                chrome={chrome}
+                onOpenTriage={onOpenTriage}
+              />
+            )}
           </Card>
         </div>
 
-        <Card
-          title="Budget vs. actual"
-          subtitle={month ? `${month} — month to date` : undefined}
-          actions={
-            month && (
-              <button
-                onClick={() => onOpenBudgets(month)}
-                style={smallButton}
-              >
+        <div style={{ gridColumn: '1 / -1' }}>
+          <Card
+            title="Budget vs. actual"
+            subtitle={[windowLabel, partialNote(budget)].filter(Boolean).join(' · ')}
+            actions={
+              <button onClick={onOpenBudgets} style={smallButton}>
                 Open Budgets
               </button>
-            )
-          }
-        >
-          {budget && <BudgetCard budget={budget} />}
-        </Card>
+            }
+          >
+            <dl
+              style={{
+                margin: '0 0 0.75rem',
+                display: 'grid',
+                gridTemplateColumns: 'auto auto 1fr',
+                gap: '0.3rem 1rem',
+                fontSize: '0.9rem',
+              }}
+            >
+              <dt>Planned</dt>
+              <dd style={{ margin: 0, textAlign: 'right' }}>
+                <Money cents={completeTotal(budget, (p) => p.plannedCents)} testId="budget-planned" />
+              </dd>
+              <span />
+              <dt>Actual</dt>
+              <dd style={{ margin: 0, textAlign: 'right' }}>
+                <Money cents={completeTotal(budget, (p) => p.actualCents)} testId="budget-actual" />
+              </dd>
+              <span />
+              <dt>Total spent</dt>
+              <dd style={{ margin: 0, textAlign: 'right' }}>
+                <Money cents={completeTotal(budget, (p) => p.expenseCents)} testId="budget-expense" />
+              </dd>
+              <span />
+            </dl>
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={budget} margin={{ top: 4, right: 8, bottom: 0, left: 8 }}>
+                <CartesianGrid stroke={chrome.grid} vertical={false} />
+                <XAxis dataKey="month" tick={{ fontSize: 11, fill: chrome.axis }} stroke={chrome.axis} />
+                <YAxis
+                  tickFormatter={euroAxis}
+                  tick={{ fontSize: 11, fill: chrome.axis }}
+                  stroke={chrome.axis}
+                  width={56}
+                />
+                <Tooltip
+                  formatter={tooltipFormatter}
+                  contentStyle={{
+                    background: chrome.tooltipBg,
+                    border: `1px solid ${chrome.axis}`,
+                    borderRadius: 6,
+                  }}
+                  labelStyle={{ color: chrome.tooltipText }}
+                />
+                <Legend wrapperStyle={{ fontSize: 12 }} />
+                <Bar dataKey="plannedCents" name="Planned" fill={series.planned} radius={[4, 4, 0, 0]} isAnimationActive={false}>
+                  {budget.map((p) => (
+                    <Cell key={p.month} fill={series.planned} fillOpacity={p.partial ? PARTIAL_OPACITY : 1} />
+                  ))}
+                </Bar>
+                <Bar dataKey="actualCents" name="Actual" fill={series.actual} radius={[4, 4, 0, 0]} isAnimationActive={false}>
+                  {budget.map((p) => (
+                    <Cell key={p.month} fill={series.actual} fillOpacity={p.partial ? PARTIAL_OPACITY : 1} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+            {budget.every((p) => !p.budgeted) && (
+              <p style={{ fontSize: '0.75rem', color: 'var(--muted)' }} data-testid="budget-none">
+                No category goals set in this window.
+              </p>
+            )}
+            <ul hidden data-testid="budget-series">
+              {budget.map((p) => (
+                <li
+                  key={p.month}
+                  data-month={p.month}
+                  data-planned={p.plannedCents}
+                  data-actual={p.actualCents}
+                  data-expense={p.expenseCents}
+                  data-materialized={String(p.materialized)}
+                  data-partial={String(p.partial)}
+                />
+              ))}
+            </ul>
+          </Card>
+        </div>
 
         {month && <AssetSnapshotCard month={month} onSaved={() => loadTrends(window_)} />}
       </div>
@@ -510,95 +685,110 @@ export function DashboardPage({ onOpenBudgets }: { onOpenBudgets: (month: string
   );
 }
 
-/** Horizontal magnitude bars — one measure, so one hue, sized by share. */
-function CategoryBars({ entries }: { entries: CategoryBreakdownEntry[] }) {
-  const largest = Math.max(1, ...entries.map((e) => Math.abs(e.amountCents)));
-  return (
-    <ul style={{ listStyle: 'none', margin: 0, padding: 0 }} data-testid="category-breakdown">
-      {entries.map((entry) => (
-        <li
-          key={entry.categoryId ?? 'uncategorized'}
-          data-testid={`category-${entry.categoryId ?? 'uncategorized'}`}
-          data-cents={entry.amountCents}
-          style={{ display: 'grid', gridTemplateColumns: '15rem 1fr auto', gap: '0.5rem', alignItems: 'center', marginBottom: '0.35rem' }}
-        >
-          <span style={{ fontSize: '0.85rem', whiteSpace: 'nowrap' }}>
-            {entry.name}
-            {entry.categoryId === null && (
-              <span
-                style={{
-                  marginLeft: '0.4rem',
-                  fontSize: '0.7rem',
-                  border: '1px solid var(--warn)',
-                  color: 'var(--warn)',
-                  borderRadius: 4,
-                  padding: '0 0.25rem',
-                }}
-              >
-                needs review
-              </span>
-            )}
-          </span>
-          <span style={{ background: 'var(--track)', borderRadius: 4, height: 12 }}>
-            <span
-              style={{
-                display: 'block',
-                width: `${(Math.abs(entry.amountCents) / largest) * 100}%`,
-                background: entry.color ?? SPEND,
-                borderRadius: 4,
-                height: 12,
-              }}
-            />
-          </span>
-          <span style={{ fontSize: '0.85rem', textAlign: 'right' }}>
-            {formatEur(entry.amountCents)}
-          </span>
-        </li>
-      ))}
-    </ul>
-  );
-}
+/**
+ * Spending as stacked monthly bands. The API decides which categories are big
+ * enough to chart and collapses the rest, so this only assigns colour and shape.
+ */
+function SpendingTrend({
+  trend,
+  theme,
+  chrome,
+  onOpenTriage,
+}: {
+  trend: CategoryTrend;
+  theme: 'light' | 'dark';
+  chrome: (typeof CHROME)[keyof typeof CHROME];
+  onOpenTriage: () => void;
+}) {
+  const colorFor = (key: number | null | 'rest', rank: number): string => {
+    if (key === null) return UNCATEGORIZED_COLOR[theme];
+    if (key === 'rest') return REST_COLOR[theme];
+    return SPEND_PALETTE[theme][rank % SPEND_PALETTE[theme].length]!;
+  };
 
-function BudgetCard({ budget }: { budget: BudgetVsActual }) {
-  if (!budget.materialized) {
-    return <p style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>This month has no budget yet.</p>;
-  }
+  const data = trend.months.map((m, i) => {
+    const row: Record<string, string | number | boolean> = { month: m.month, partial: m.partial };
+    for (const s of trend.series) row[String(s.key)] = s.amountsCents[i] ?? 0;
+    return row;
+  });
+
+  const completeSum = (s: CategoryTrend['series'][number]): number =>
+    s.amountsCents.reduce((n, cents, i) => (trend.months[i]!.partial ? n : n + cents), 0);
+  const windowTotal = trend.series.reduce((sum, s) => sum + completeSum(s), 0);
+  // Uncategorized keeps its needs-review billing here: it is a distinct state
+  // from the reviewed catch-all, and the queue that resolves it is one click away.
+  const uncategorizedTotal = trend.series
+    .filter((s) => s.key === null)
+    .reduce((sum, s) => sum + completeSum(s), 0);
+
   return (
     <>
-      <dl style={{ margin: '0 0 0.75rem', display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '0.3rem 1rem' }}>
-        <dt>Planned</dt>
-        <dd style={{ margin: 0, textAlign: 'right' }}>
-          <Money cents={budget.totals.plannedCents} testId="budget-planned" />
-        </dd>
-        <dt>Actual</dt>
-        <dd style={{ margin: 0, textAlign: 'right' }}>
-          <Money cents={budget.totals.actualCents} testId="budget-actual" />
-        </dd>
-        <dt>Total spent</dt>
-        <dd style={{ margin: 0, textAlign: 'right' }}>
-          <Money cents={budget.totals.expenseCents} testId="budget-expense" />
-        </dd>
-      </dl>
-      {!budget.budgeted && (
-        <p style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>No category goals set for this month.</p>
+      <p style={{ fontSize: '1.3rem', margin: '0 0 0.5rem' }}>
+        <Money cents={windowTotal} testId="spending-total" />
+        <span style={{ fontSize: '0.8rem', color: 'var(--muted)' }}> total</span>
+      </p>
+      <ResponsiveContainer width="100%" height={240}>
+        <BarChart data={data} margin={{ top: 4, right: 8, bottom: 0, left: 8 }}>
+          <CartesianGrid stroke={chrome.grid} vertical={false} />
+          <XAxis dataKey="month" tick={{ fontSize: 11, fill: chrome.axis }} stroke={chrome.axis} />
+          <YAxis
+            tickFormatter={euroAxis}
+            tick={{ fontSize: 11, fill: chrome.axis }}
+            stroke={chrome.axis}
+            width={56}
+          />
+          <Tooltip
+            formatter={tooltipFormatter}
+            contentStyle={{
+              background: chrome.tooltipBg,
+              border: `1px solid ${chrome.axis}`,
+              borderRadius: 6,
+            }}
+            labelStyle={{ color: chrome.tooltipText }}
+          />
+          <Legend wrapperStyle={{ fontSize: 12 }} />
+          {trend.series.map((s, rank) => (
+            <Bar
+              key={String(s.key)}
+              dataKey={String(s.key)}
+              stackId="spend"
+              name={s.name}
+              fill={colorFor(s.key, rank)}
+              isAnimationActive={false}
+            >
+              {data.map((row) => (
+                <Cell
+                  key={String(row.month)}
+                  fill={colorFor(s.key, rank)}
+                  fillOpacity={row.partial ? PARTIAL_OPACITY : 1}
+                />
+              ))}
+            </Bar>
+          ))}
+        </BarChart>
+      </ResponsiveContainer>
+      {uncategorizedTotal !== 0 && (
+        <p style={{ fontSize: '0.8rem', margin: '0.25rem 0 0' }} data-testid="spending-needs-review">
+          <Money cents={uncategorizedTotal} testId="spending-uncategorized" /> of this is
+          uncategorized and needs review.{' '}
+          <button onClick={onOpenTriage} style={{ ...smallButton, marginLeft: '0.25rem' }}>
+            Sort it out
+          </button>
+        </p>
       )}
-      <ul style={{ listStyle: 'none', margin: 0, padding: 0, fontSize: '0.8rem' }}>
-        {budget.lines.slice(0, 6).map((line) => (
+      <ul hidden data-testid="category-trend-series">
+        {trend.series.map((s) => (
           <li
-            key={line.id}
-            data-testid={`budget-line-${line.id}`}
-            data-planned={line.plannedCents}
-            data-actual={line.actualCents}
-            style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem' }}
-          >
-            <span>
-              {line.name}
-              {line.pending && <span style={{ color: 'var(--muted)' }}> · pending</span>}
-            </span>
-            <span>
-              {formatEur(line.actualCents)} / {formatEur(line.plannedCents)}
-            </span>
-          </li>
+            key={String(s.key)}
+            data-key={String(s.key)}
+            data-name={s.name}
+            data-amounts={s.amountsCents.join(',')}
+          />
+        ))}
+      </ul>
+      <ul hidden data-testid="category-trend-months">
+        {trend.months.map((m) => (
+          <li key={m.month} data-month={m.month} data-partial={String(m.partial)} />
         ))}
       </ul>
     </>

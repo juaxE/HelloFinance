@@ -72,7 +72,12 @@ export function App() {
         </nav>
       </header>
       <main>
-        {view === 'dashboard' && <DashboardPage onOpenBudgets={() => setView('budgets')} />}
+        {view === 'dashboard' && (
+          <DashboardPage
+            onOpenBudgets={() => setView('budgets')}
+            onOpenTriage={() => setView('triage')}
+          />
+        )}
         {view === 'import' && <ImportPage />}
         {view === 'transactions' && <TransactionsPage />}
         {view === 'triage' && (

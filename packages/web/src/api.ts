@@ -8,16 +8,16 @@ import type {
   BudgetLineCreate,
   BudgetLinePatch,
   BudgetMonth,
-  BudgetVsActual,
+  BudgetTrendPoint,
   CashFlowPoint,
   Category,
-  CategoryBreakdownEntry,
+  CategoryTrend,
   CommitRequest,
   CommitResult,
   ExtendHistoryResult,
   GroupPatch,
   ImportDetail,
-  IncomeBreakdown,
+  IncomePoint,
   LabelingRule,
   LabelingRulePatch,
   NetWorthPoint,
@@ -214,13 +214,16 @@ export const api = {
 
   getCashFlow: (window: number) => request<CashFlowPoint[]>(`/dashboard/cash-flow?window=${window}`),
 
-  getIncome: (month: string) => request<IncomeBreakdown>(`/dashboard/income?month=${month}`),
+  // The dashboard charts the trends; the `?month=` forms remain the per-month
+  // primitives the trends compose (and where criterion 5's tie-out is asserted).
+  getIncomeTrend: (window: number) =>
+    request<IncomePoint[]>(`/dashboard/income-trend?window=${window}`),
 
-  getCategoryBreakdown: (month: string) =>
-    request<CategoryBreakdownEntry[]>(`/dashboard/categories?month=${month}`),
+  getCategoryTrend: (window: number) =>
+    request<CategoryTrend>(`/dashboard/category-trend?window=${window}`),
 
-  getBudgetVsActual: (month: string) =>
-    request<BudgetVsActual>(`/dashboard/budget-vs-actual?month=${month}`),
+  getBudgetTrend: (window: number) =>
+    request<BudgetTrendPoint[]>(`/dashboard/budget-trend?window=${window}`),
 
   getRecurringCommitments: () =>
     request<RecurringCommitments>('/dashboard/recurring-commitments'),

@@ -22,12 +22,16 @@ import { and, gte, lte } from 'drizzle-orm';
 import type { Db } from '../db/client';
 import { accounts, categories, recurringTemplates, transactions } from '../db/schema';
 import { addMonths, monthDateRange } from '../budgets/months';
-import type {
-  CashFlowPoint,
-  CategoryBreakdownEntry,
-  IncomeBreakdown,
-  RecurringCommitments,
-  TrendQuery,
+import {
+  TOP_SPENDING_CATEGORIES,
+  type CashFlowPoint,
+  type CategoryBreakdownEntry,
+  type CategoryTrend,
+  type CategoryTrendSeries,
+  type IncomeBreakdown,
+  type IncomePoint,
+  type RecurringCommitments,
+  type TrendQuery,
 } from '@finance/shared';
 
 type TransactionRow = typeof transactions.$inferSelect;
@@ -119,7 +123,7 @@ export function trendMonths(db: Db, query: TrendQuery, currentMonth: string): st
  * figure spec 003's reconciliation reports as `totals.expenseCents` over the
  * same month, and criteria 2 and 5 assert that equality.
  */
-export function cashFlow(db: Db, months: string[]): CashFlowPoint[] {
+export function cashFlow(db: Db, months: string[], currentMonth: string): CashFlowPoint[] {
   const buckets = loadBuckets(db);
   return months.map((month) => {
     const rows = transactionsInMonth(db, month);
@@ -129,7 +133,13 @@ export function cashFlow(db: Db, months: string[]): CashFlowPoint[] {
     const expensesCents = rows
       .filter((t) => isExpense(t, buckets))
       .reduce((s, t) => s - t.amountCents, 0);
-    return { month, incomeCents, expensesCents, netCents: incomeCents - expensesCents };
+    return {
+      month,
+      incomeCents,
+      expensesCents,
+      netCents: incomeCents - expensesCents,
+      partial: month === currentMonth,
+    };
   });
 }
 
@@ -161,6 +171,84 @@ export function incomeBreakdown(db: Db, month: string): IncomeBreakdown {
   byCategory.sort((a, b) => b.amountCents - a.amountCents);
 
   return { month, salaryCents, otherIncomeCents, byCategory };
+}
+
+/** Salary vs other income per month, for the income trend. */
+export function incomeTrend(db: Db, months: string[], currentMonth: string): IncomePoint[] {
+  return months.map((month) => {
+    const { salaryCents, otherIncomeCents } = incomeBreakdown(db, month);
+    return { month, salaryCents, otherIncomeCents, partial: month === currentMonth };
+  });
+}
+
+/**
+ * Per-month spending, charted as the biggest few categories plus a collapsed
+ * remainder. Fifteen stacked series would be unreadable and would blow past the
+ * CVD-separation discipline the dashboard's palette is built on.
+ *
+ * The ranking runs over the window's COMPLETE months only: including the month
+ * in progress would rank categories by how much of it has posted so far, so the
+ * legend would reshuffle partway through every month.
+ */
+export function categoryTrend(db: Db, months: string[], currentMonth: string): CategoryTrend {
+  const perMonth = months.map((month) => ({
+    month,
+    partial: month === currentMonth,
+    entries: categoryBreakdown(db, month),
+  }));
+
+  const complete = perMonth.filter((m) => !m.partial);
+  const rankOver = complete.length > 0 ? complete : perMonth;
+
+  const totals = new Map<number, { name: string; color: string | null; total: number }>();
+  for (const m of rankOver) {
+    for (const entry of m.entries) {
+      // Uncategorized is never ranked — it gets its own series unconditionally.
+      if (entry.categoryId === null) continue;
+      const existing = totals.get(entry.categoryId);
+      if (existing) existing.total += entry.amountCents;
+      else
+        totals.set(entry.categoryId, {
+          name: entry.name,
+          color: entry.color,
+          total: entry.amountCents,
+        });
+    }
+  }
+
+  const top = [...totals]
+    .sort((a, b) => b[1].total - a[1].total)
+    .slice(0, TOP_SPENDING_CATEGORIES);
+  const topIds = new Set(top.map(([id]) => id));
+
+  const series: CategoryTrendSeries[] = top.map(([categoryId, meta]) => ({
+    key: categoryId,
+    name: meta.name,
+    color: meta.color,
+    amountsCents: perMonth.map(
+      (m) => m.entries.find((e) => e.categoryId === categoryId)?.amountCents ?? 0,
+    ),
+  }));
+
+  const rest = perMonth.map((m) =>
+    m.entries
+      .filter((e) => e.categoryId !== null && !topIds.has(e.categoryId))
+      .reduce((sum, e) => sum + e.amountCents, 0),
+  );
+  const uncategorized = perMonth.map(
+    (m) => m.entries.find((e) => e.categoryId === null)?.amountCents ?? 0,
+  );
+
+  // An all-zero band is clutter, not information: no remainder means the top
+  // few ARE the whole picture, and no uncategorized means nothing needs review.
+  if (rest.some((n) => n !== 0)) {
+    series.push({ key: 'rest', name: 'Everything else', color: null, amountsCents: rest });
+  }
+  if (uncategorized.some((n) => n !== 0)) {
+    series.push({ key: null, name: 'Uncategorized', color: null, amountsCents: uncategorized });
+  }
+
+  return { months: perMonth.map(({ month, partial }) => ({ month, partial })), series };
 }
 
 // --- Category breakdown (decision 003-M) ------------------------------------
