@@ -33,6 +33,20 @@ fixtures/   # synthetic S-Pankki data + expected.json (never real data)
 | `npm run fixtures:generate`              | Regenerate synthetic fixtures + `expected.json`                  |
 | `npm run db:generate -w @finance/server` | Generate Drizzle migrations (none yet — no domain tables)        |
 
+## Backing up the real database
+
+The real database is a single SQLite file at `packages/server/data/app.db`.
+It runs in **WAL mode**, so a live copy of `app.db` alone can miss recent
+writes sitting in `app.db-wal`. Either:
+
+- **Stop the server first**, then copy `app.db` (a clean shutdown checkpoints
+  the WAL), or
+- copy all three files together (`app.db`, `app.db-wal`, `app.db-shm`), or
+- with the server running, use SQLite's online backup:
+  `sqlite3 packages/server/data/app.db ".backup 'backup-YYYY-MM-DD.db'"`.
+
+Back up before every import session, and keep backups outside the repo.
+
 ## Privacy posture (non-negotiable)
 
 - Both the API and the Vite dev server bind to `127.0.0.1` only.
