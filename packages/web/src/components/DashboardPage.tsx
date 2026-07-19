@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Bar,
   BarChart,
@@ -144,18 +144,32 @@ export function DashboardPage({ onOpenBudgets }: { onOpenBudgets: (month: string
    */
   const month = commitments?.month ?? null;
 
+  /**
+   * Each loader stamps its request and drops the result if a newer one started
+   * while it was in flight. Clicking through the window selector fires a fetch
+   * per click, and without this a slower earlier response can land last and
+   * paint numbers for a window the user is no longer on — the rendered figures
+   * would then disagree with the API for the selected window (validation §6).
+   */
+  const trendsReq = useRef(0);
+  const monthReq = useRef(0);
+
   const loadTrends = useCallback(async (w: number) => {
+    const seq = ++trendsReq.current;
     const [nw, cf] = await Promise.all([api.getNetWorth(w), api.getCashFlow(w)]);
+    if (seq !== trendsReq.current) return;
     setNetWorth(nw);
     setCashFlow(cf);
   }, []);
 
   const loadMonth = useCallback(async (target: string) => {
+    const seq = ++monthReq.current;
     const [inc, cats, bva] = await Promise.all([
       api.getIncome(target),
       api.getCategoryBreakdown(target),
       api.getBudgetVsActual(target),
     ]);
+    if (seq !== monthReq.current) return;
     setIncome(inc);
     setBreakdown(cats);
     setBudget(bva);

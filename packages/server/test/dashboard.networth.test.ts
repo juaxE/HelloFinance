@@ -267,6 +267,35 @@ describe('spec 004 — net worth over the seeded fixtures', () => {
     // The omitted loan kept its own snapshot — no delete-by-omission, no zeroing.
     expect(after.find((e) => e.name === 'Car loan')).toEqual(loanEntryBefore);
   });
+
+  /**
+   * Loans are entered positive and SUBTRACTED, so a negative value would flip an
+   * asset's sign and raise net worth. Rejected at the schema for every kind, and
+   * the stored snapshot must be untouched by the rejected write.
+   */
+  it('a negative valueCents is rejected for both kinds, leaving the stored snapshot intact', async () => {
+    const before = await get<AssetSnapshotEntry[]>('/api/asset-snapshots?month=2026-06');
+
+    for (const name of ['Car loan', 'Index fund']) {
+      const asset = assetByName(name);
+      const rejected = await app.inject({
+        method: 'PUT',
+        url: '/api/asset-snapshots',
+        payload: { month: '2026-06', values: [{ assetId: asset.id, valueCents: -1 }] },
+      });
+      expect(rejected.statusCode).toBe(400);
+    }
+
+    expect(await get<AssetSnapshotEntry[]>('/api/asset-snapshots?month=2026-06')).toEqual(before);
+
+    // Zero remains the supported way to clear a contribution.
+    const accepted = await app.inject({
+      method: 'PUT',
+      url: '/api/asset-snapshots',
+      payload: { month: '2026-06', values: [{ assetId: assetByName('Car loan').id, valueCents: 0 }] },
+    });
+    expect(accepted.statusCode).toBe(200);
+  });
 });
 
 describe('spec 004 — months before an account existed (004-E)', () => {

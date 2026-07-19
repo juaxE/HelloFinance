@@ -78,8 +78,13 @@ export const zAssetSnapshotsPut = z.object({
   values: z.array(
     z.object({
       assetId: z.number().int(),
-      /** Loans are entered POSITIVE and subtracted by the net-worth formula. */
-      valueCents: z.number().int(),
+      /**
+       * Loans are entered POSITIVE and subtracted by the net-worth formula, so a
+       * negative value would flip an asset's sign and raise net worth instead of
+       * lowering it. Rejected for every kind: clearing a contribution is an
+       * explicit `0`, never a negative.
+       */
+      valueCents: z.number().int().nonnegative(),
     }),
   ),
 });
