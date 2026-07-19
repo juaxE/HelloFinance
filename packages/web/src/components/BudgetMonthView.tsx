@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { BudgetMonth, Category, ReconciledLine } from '@finance/shared';
-import { formatCents, formatDate, parseEurosToCents } from '../format';
+import { formatEur } from '@finance/shared';
+import { formatDate, parseEurosToCents } from '../format';
 
 /**
  * The month view (spec 003). Lines are grouped by **provenance** — Bills
@@ -95,7 +96,7 @@ export function BudgetMonthView({
             {month.unbudgeted.map((u) => (
               <tr key={u.categoryId}>
                 <td>{categoryName(u.categoryId)}</td>
-                <td style={{ textAlign: 'right' }}>{formatCents(u.actualCents)}</td>
+                <td style={{ textAlign: 'right' }}>{formatEur(u.actualCents)}</td>
               </tr>
             ))}
           </tbody>
@@ -128,7 +129,7 @@ export function BudgetMonthView({
                     color: r.amountCents > 0 ? 'var(--accent)' : 'inherit',
                   }}
                 >
-                  {formatCents(r.amountCents)}
+                  {formatEur(r.amountCents)}
                 </td>
               </tr>
             ))}
@@ -139,16 +140,16 @@ export function BudgetMonthView({
       <footer data-testid="month-totals" style={{ marginTop: '1.5rem', borderTop: '1px solid var(--border)', paddingTop: '0.75rem' }}>
         <dl style={{ display: 'grid', gridTemplateColumns: 'auto auto', gap: '0.25rem 1rem', margin: 0 }}>
           <dt>Planned</dt>
-          <dd style={{ textAlign: 'right', margin: 0 }}>{formatCents(month.totals.plannedCents)}</dd>
+          <dd style={{ textAlign: 'right', margin: 0 }}>{formatEur(month.totals.plannedCents)}</dd>
           <dt>Actual (on plan)</dt>
-          <dd style={{ textAlign: 'right', margin: 0 }}>{formatCents(month.totals.actualCents)}</dd>
+          <dd style={{ textAlign: 'right', margin: 0 }}>{formatEur(month.totals.actualCents)}</dd>
           <dt>Unbudgeted</dt>
           <dd style={{ textAlign: 'right', margin: 0 }}>
-            {formatCents(month.totals.unbudgetedCents)}
+            {formatEur(month.totals.unbudgetedCents)}
           </dd>
           <dt>Needs review</dt>
           <dd style={{ textAlign: 'right', margin: 0 }}>
-            {formatCents(month.totals.needsReviewCents)}
+            {formatEur(month.totals.needsReviewCents)}
           </dd>
         </dl>
         {/*
@@ -157,7 +158,7 @@ export function BudgetMonthView({
           mismatch a visible defect rather than a silent one.
         */}
         <p data-testid="tie-out" style={{ marginBottom: 0 }}>
-          Total expenses this month: <strong>{formatCents(month.totals.expenseCents)}</strong>{' '}
+          Total expenses this month: <strong>{formatEur(month.totals.expenseCents)}</strong>{' '}
           {tieOutHolds(month) ? (
             <span style={{ color: 'var(--muted)' }}>— reconciles exactly</span>
           ) : (
@@ -393,17 +394,17 @@ function LineGroup({
                 </td>
                 <td>{categoryName(line.categoryId)}</td>
                 {showDay && <td>{line.expectedDayOfMonth ?? ''}</td>}
-                <td style={{ textAlign: 'right' }}>{formatCents(line.amountCents)}</td>
+                <td style={{ textAlign: 'right' }}>{formatEur(line.amountCents)}</td>
                 <td style={{ textAlign: 'right' }}>
                   {line.pending ? (
                     <span data-testid="pending" style={{ color: 'var(--muted)' }}>
                       pending
                     </span>
                   ) : (
-                    formatCents(line.actualCents)
+                    formatEur(line.actualCents)
                   )}
                 </td>
-                <td style={{ textAlign: 'right' }}>{formatCents(line.varianceCents)}</td>
+                <td style={{ textAlign: 'right' }}>{formatEur(line.varianceCents)}</td>
                 <td style={{ width: 120 }}>
                   <VarianceBar planned={line.amountCents} actual={line.actualCents} />
                 </td>

@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import type { Account, Category, Transaction } from '@finance/shared';
 import { api } from '../api';
-import { formatCents, formatDate } from '../format';
+import { formatEur } from '@finance/shared';
+import { formatDate } from '../format';
 
 /** Spec 002 "Transactions list": shows notes inline, relabel via PATCH. */
 export function TransactionsPage() {
@@ -96,7 +97,7 @@ export function TransactionsPage() {
             <tr key={t.id}>
               <td>{formatDate(t.paymentDate)}</td>
               <td>{t.counterparty}</td>
-              <td>{formatCents(t.amountCents)}</td>
+              <td>{formatEur(t.amountCents)}</td>
               <td>
                 <select
                   aria-label={`Category for transaction ${t.id}`}

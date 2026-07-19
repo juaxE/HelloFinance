@@ -1,12 +1,14 @@
 import { useState } from 'react';
 import { BudgetsPage } from './components/BudgetsPage';
+import { DashboardPage } from './components/DashboardPage';
 import { ImportPage } from './components/ImportPage';
 import { RulesPage } from './components/RulesPage';
 import { TransactionsPage } from './components/TransactionsPage';
 
-type View = 'import' | 'transactions' | 'budgets' | 'rules';
+type View = 'dashboard' | 'import' | 'transactions' | 'budgets' | 'rules';
 
 const VIEWS: Array<{ id: View; label: string }> = [
+  { id: 'dashboard', label: 'Dashboard' },
   { id: 'import', label: 'Import' },
   { id: 'transactions', label: 'Transactions' },
   { id: 'budgets', label: 'Budgets' },
@@ -14,10 +16,13 @@ const VIEWS: Array<{ id: View; label: string }> = [
 ];
 
 export function App() {
+  // Import stays the landing view: spec 004 adds a dashboard route, it does not
+  // say the dashboard becomes the default, and changing it would be a drive-by
+  // behavior change to specs 001-003. Noted as a follow-up on the spec.
   const [view, setView] = useState<View>('import');
 
   return (
-    <div style={{ fontFamily: 'system-ui, sans-serif', maxWidth: 960, margin: '0 auto', padding: '1rem' }}>
+    <div style={{ fontFamily: 'system-ui, sans-serif', maxWidth: 1100, margin: '0 auto', padding: '1rem' }}>
       <header style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', marginBottom: '1.5rem' }}>
         <h1 style={{ fontSize: '1.25rem', margin: 0 }}>HelloFinance</h1>
         <nav style={{ display: 'flex', gap: '0.5rem' }}>
@@ -29,7 +34,7 @@ export function App() {
               style={{
                 border: 'none',
                 background: view === v.id ? 'var(--accent)' : 'transparent',
-                color: view === v.id ? 'white' : 'inherit',
+                color: view === v.id ? 'var(--accent-contrast)' : 'inherit',
                 borderRadius: 6,
                 padding: '0.35rem 0.75rem',
               }}
@@ -40,6 +45,7 @@ export function App() {
         </nav>
       </header>
       <main>
+        {view === 'dashboard' && <DashboardPage onOpenBudgets={() => setView('budgets')} />}
         {view === 'import' && <ImportPage />}
         {view === 'transactions' && <TransactionsPage />}
         {view === 'budgets' && <BudgetsPage />}

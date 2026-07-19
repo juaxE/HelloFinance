@@ -20,6 +20,11 @@ export default defineConfig({
       // resolves.
       command: 'npm run seed:test -w @finance/server && npm run start -w @finance/server',
       cwd: '../..',
+      // The synthetic fixtures run 2025-07..2026-06 while the real current month
+      // moves. Pinning "today" inside that span keeps the dashboard's
+      // current-month cards on a month the seed actually has data for; without
+      // it they would all render empty and criteria 10/11 would assert nothing.
+      env: { ...process.env, FINANCE_NOW: '2026-06-15' },
       url: 'http://127.0.0.1:3001/health',
       reuseExistingServer: !process.env.CI,
       timeout: 60_000,

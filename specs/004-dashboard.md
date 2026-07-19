@@ -1,6 +1,6 @@
 # Spec 004 — Dashboard (overview)
 
-Status: draft, awaiting owner approval
+Status: **approved** (owner, 2026-07-18) — ready to implement.
 Depends on: 001 (schema), 002 (transactions), 003 (budget reconciliation).
 Depended on by: nothing.
 
@@ -300,6 +300,70 @@ implementation. Carry these into the implementation prompt's test rules.
   as the right ones. The subsequent closing-`0`-snapshot step asserts the
   complement: months `≥ M` move by the loan balance, months `< M` deep-equal the
   captured baseline.
+
+## Implementation notes
+
+Choices made where the spec was silent on a detail. Each is the simplest option
+consistent with the existing code; none changes a behavior the spec pins.
+
+- **`partialAccounts` is on the net-worth response only.** The spec introduces
+  the flag under the net-worth section, and it is a statement about account
+  *balances*. Cash flow has no opening-balance term, so the flag would mean
+  nothing there. Both endpoints do clamp, since the spec says "trend endpoints".
+- **Any account with a null `opening_balance_date` suppresses the clamp.** The
+  spec pins "no clamp if every account's is null" and separately that such an
+  account "has no lower bound and contributes for every month". The mixed case
+  follows from the second rule: one unbounded account makes every requested
+  month meaningful.
+- **`GET /dashboard/budget-vs-actual` never materializes a month.** It returns
+  `materialized: false` with an empty planned side and the month's real
+  `expenseCents` (computed over 003's same set M, so the cash-flow tie-out holds
+  either way). Materializing on a glance would violate decision 003-C.
+- **The UI takes "the current month" from the server**, via the month the
+  commitments endpoint reports, not from the browser clock — otherwise a pinned
+  server clock and the browser's real one would disagree about which month the
+  "month to date" cards show.
+- **`FINANCE_NOW`** (new, `packages/server/src/config.ts`) pins the running
+  server's "today". Unset in normal use. It exists because the fixtures cover a
+  fixed span while the calendar moves; without it the dev app and the Playwright
+  run open on a month the seed has no data for.
+- **`formatCents` moved to `@finance/shared` as `formatEur`**, as this spec
+  requires, and the 002/003 components now import it from there. The parsing
+  half (`parseEurosToCents`) stayed in the web package — only the UI needs it.
+- **Assets and their snapshots are fixture data.** They live in
+  `fixtures/expected.json`, and `seed-data.ts` (extracted from `seed-test.ts`)
+  loads them, so the net-worth expectations and the seeded values cannot drift.
+
+### Follow-ups (not built)
+
+- **The dashboard is not the landing view.** Import still is. Making the
+  dashboard the default is a reasonable product call but is a behavior change to
+  specs 001–003, so it is left to the owner.
+- **The seeded category breakdown is effectively one slice.** `seed-test.ts`
+  inserts its labeling rules *after* committing the import, so they never apply
+  and ~320 of 349 rows stay Uncategorized. The breakdown card is therefore
+  truthful but visually thin on seed data. Fixing it means changing 003's seed
+  ordering, which is out of scope here.
+- Drill-down from a chart into the underlying transaction list (already listed
+  as deferred below).
+- **One window selector, not two.** The spec's UI sketch gives the cash-flow card
+  the "same window selector" as net worth. It is implemented as a single control
+  in the net-worth header driving both charts through shared state, so the two
+  can never disagree — but from the cash-flow card the control is neither present
+  nor obviously connected. Owner reviewed and chose to keep the single selector;
+  hoisting it above both cards is the open alternative.
+- **Archived assets can only be restored through the API.** `PATCH /api/assets/:id`
+  accepts `{ archived: false }`, but the entry form lists non-archived assets
+  only and offers no way back. Mis-archiving is now hard (the confirm has an
+  explicit cancel), but an "show archived" toggle would close the loop.
+- **`fixtures/generate.mjs` normalizes commitments in floating point.**
+  `recurringCommitments()` uses `Math.round(Math.abs(cents) / intervalMonths)`
+  while the server uses the pinned integer `roundHalfUpAwayFromZero`. Harmless
+  today because every `SEEDED_TEMPLATES` amount divides evenly, so the two agree
+  exactly — but a future template with a non-divisible amount would make the
+  fixture and the server disagree by a cent, and the criterion 6 test would fail
+  pointing at the server rather than at the generator. Port the integer helper
+  into the generator before adding such a template.
 
 ## Deferred (needs a new approved spec)
 

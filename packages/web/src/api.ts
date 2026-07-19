@@ -1,17 +1,27 @@
 import type {
   Account,
+  Asset,
+  AssetCreate,
+  AssetPatch,
+  AssetSnapshotEntry,
   BudgetLine,
   BudgetLineCreate,
   BudgetLinePatch,
   BudgetMonth,
+  BudgetVsActual,
+  CashFlowPoint,
   Category,
+  CategoryBreakdownEntry,
   CommitRequest,
   CommitResult,
   ExtendHistoryResult,
   GroupPatch,
   ImportDetail,
+  IncomeBreakdown,
   LabelingRule,
   LabelingRulePatch,
+  NetWorthPoint,
+  RecurringCommitments,
   RecurringTemplate,
   RecurringTemplateCreate,
   RecurringTemplatePatch,
@@ -173,4 +183,40 @@ export const api = {
 
   deleteRecurringTemplate: (id: number) =>
     request<void>(`/recurring-templates/${id}`, { method: 'DELETE' }),
+
+  // --- Dashboard (spec 004) ------------------------------------------------
+
+  getNetWorth: (window: number) =>
+    request<NetWorthPoint[]>(`/dashboard/net-worth?window=${window}`),
+
+  getCashFlow: (window: number) => request<CashFlowPoint[]>(`/dashboard/cash-flow?window=${window}`),
+
+  getIncome: (month: string) => request<IncomeBreakdown>(`/dashboard/income?month=${month}`),
+
+  getCategoryBreakdown: (month: string) =>
+    request<CategoryBreakdownEntry[]>(`/dashboard/categories?month=${month}`),
+
+  getBudgetVsActual: (month: string) =>
+    request<BudgetVsActual>(`/dashboard/budget-vs-actual?month=${month}`),
+
+  getRecurringCommitments: () =>
+    request<RecurringCommitments>('/dashboard/recurring-commitments'),
+
+  listAssets: () => request<Asset[]>('/assets'),
+
+  createAsset: (body: AssetCreate) =>
+    request<Asset>('/assets', { method: 'POST', body: JSON.stringify(body) }),
+
+  patchAsset: (id: number, patch: AssetPatch) =>
+    request<Asset>(`/assets/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+
+  getAssetSnapshots: (month: string) =>
+    request<AssetSnapshotEntry[]>(`/asset-snapshots?month=${month}`),
+
+  /** Partial upsert: assets omitted from `values` are left untouched. */
+  saveAssetSnapshots: (month: string, values: { assetId: number; valueCents: number }[]) =>
+    request<{ month: string; saved: number }>('/asset-snapshots', {
+      method: 'PUT',
+      body: JSON.stringify({ month, values }),
+    }),
 };

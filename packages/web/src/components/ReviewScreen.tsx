@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import type { Account, Category, CommitResult, ImportDetail } from '@finance/shared';
 import { api } from '../api';
-import { formatCents, formatDate } from '../format';
+import { formatEur } from '@finance/shared';
+import { formatDate } from '../format';
 import { GroupCard } from './GroupCard';
 
 interface ReviewScreenProps {
@@ -160,7 +161,7 @@ export function ReviewScreen({ detail, accounts, categories, onChange, onDone }:
               {detail.duplicates.map((d) => (
                 <tr key={d.id}>
                   <td>{formatDate(d.paymentDate)}</td>
-                  <td>{formatCents(d.amountCents)}</td>
+                  <td>{formatEur(d.amountCents)}</td>
                   <td>{d.counterparty}</td>
                   <td>
                     {d.dupState === 'duplicate_in_batch'

@@ -584,6 +584,136 @@ function recurringSummary(rows, normalizedKey, intervalMonths) {
   };
 }
 
+// --- Assets, snapshots and net worth (spec 004) ----------------------------
+//
+// Manual monthly values for the non-bank holdings the net-worth formula needs.
+// The emergency fund is NOT here: it is the buffer Account, so its balance
+// already arrives through the account term (decision 001-D).
+//
+// Every value is an explicit constant, never PRNG-derived, so the net-worth
+// expectations below are exact and stable across regeneration — and so adding
+// this section cannot shift the generator's random stream and rewrite the CSVs.
+//
+// Both series deliberately SKIP a month (`gapMonth`) so carry-forward (decision
+// 004-B) has something to prove: the skipped month must reuse the last entered
+// value rather than dropping to zero. The loan is stored positive and subtracted
+// by the formula (decision 001-E).
+const SEEDED_ASSETS = [
+  {
+    name: 'Index fund',
+    kind: 'investment',
+    gapMonth: '2025-09',
+    snapshots: {
+      '2025-07': 1200000,
+      '2025-08': 1245000,
+      // 2025-09 deliberately absent — carries 2025-08 forward.
+      '2025-10': 1310000,
+      '2025-11': 1288000,
+      '2025-12': 1350000,
+      '2026-01': 1402000,
+      '2026-02': 1375000,
+      '2026-03': 1430000,
+      '2026-04': 1465000,
+      '2026-05': 1510000,
+      '2026-06': 1555000,
+    },
+  },
+  {
+    name: 'Car loan',
+    kind: 'loan',
+    gapMonth: '2026-02',
+    snapshots: {
+      '2025-07': 1800000,
+      '2025-08': 1755000,
+      '2025-09': 1710000,
+      '2025-10': 1665000,
+      '2025-11': 1620000,
+      '2025-12': 1575000,
+      '2026-01': 1530000,
+      // 2026-02 deliberately absent — carries 2026-01 forward.
+      '2026-03': 1440000,
+      '2026-04': 1395000,
+      '2026-05': 1350000,
+      '2026-06': 1305000,
+    },
+  },
+];
+
+/** Latest snapshot with `month <= M` (carry-forward, 004-B); 0 before the first. */
+function assetValueAt(asset, month) {
+  let value = 0;
+  for (const m of Object.keys(asset.snapshots).sort()) {
+    if (m <= month) value = asset.snapshots[m];
+  }
+  return value;
+}
+
+/**
+ * Net worth per month over the seeded set: both accounts' balances at month end,
+ * plus investments, minus loans.
+ *
+ * Opening balances are 0 on 2025-07-01 (see seed-test.ts), which is on or before
+ * every fixture row, so the 001-A window excludes nothing and the account term is
+ * a plain running sum. Only COMMITTED rows count — the overlap import is left
+ * `pending_review` by the seed, so its July rows are deliberately absent here.
+ */
+function netWorth(accountRows, assets, monthList) {
+  const byMonth = {};
+  let accountsCents = 0;
+  for (const month of monthList) {
+    for (const r of accountRows) {
+      if (r._month === month) accountsCents += r.amountCents;
+    }
+    const investmentsCents = assets
+      .filter((a) => a.kind !== 'loan')
+      .reduce((s, a) => s + assetValueAt(a, month), 0);
+    const loansCents = assets
+      .filter((a) => a.kind === 'loan')
+      .reduce((s, a) => s + assetValueAt(a, month), 0);
+    byMonth[month] = {
+      accountsCents,
+      investmentsCents,
+      loansCents,
+      netWorthCents: accountsCents + investmentsCents - loansCents,
+    };
+  }
+  return byMonth;
+}
+
+// Mirrors the recurring templates seeded by
+// packages/server/src/scripts/seed-data.ts. Duplicated deliberately, exactly like
+// TYPE_HINT_EXCLUDED above: the dashboard test recomputes this figure from the
+// seeded DATABASE and asserts it equals the constant here, so a drift between the
+// seed and this file fails loudly instead of the criterion quietly checking
+// nothing. `[name, amountCents, intervalMonths]`.
+const SEEDED_TEMPLATES = [
+  ['Rent', 118000, 1],
+  ['Gym', 4990, 1],
+  ['Netflix', 1799, 1],
+  ['Self storage', 8700, 3],
+  ['Home insurance', 60000, 12],
+];
+
+/**
+ * Normalized monthly commitments (decision 003-E): Σ over templates active this
+ * month of `round(amount_cents / interval_months)`, rounded HALF-UP AWAY FROM
+ * ZERO per template before summing. Every seeded template divides exactly, so
+ * this figure does not depend on the rounding rule — criterion 6's non-divisible
+ * and exact-half cases are constructed in the test instead.
+ */
+function recurringCommitments(templates) {
+  const byTemplate = templates.map(([name, amountCents, intervalMonths]) => ({
+    name,
+    amountCents,
+    intervalMonths,
+    monthlyEquivalentCents: Math.sign(amountCents) * Math.round(Math.abs(amountCents) / intervalMonths),
+  }));
+  return {
+    normalizedMonthlyCents: byTemplate.reduce((s, t) => s + t.monthlyEquivalentCents, 0),
+    byTemplate,
+  };
+}
+
 const expected = {
   generatedBy: 'fixtures/generate.mjs',
   seed: SEED,
@@ -665,6 +795,16 @@ const expected = {
   // M as a Transfer, so this is numerically identical to a main-only figure —
   // the point is that it stays correct if the buffer ever holds real spending.
   needsReview: needsReviewCase([...mainRows, ...bufferRows], '2026-04'),
+  // Spec 004: the manual asset series the seed loads, and the net-worth figures
+  // they produce together with both accounts' balances. `gapMonth` is the month
+  // each series skips, so the carry-forward criterion has a named subject.
+  assets: {
+    seeded: SEEDED_ASSETS,
+    openingBalanceDate: '2025-07-01', // both seeded accounts; matches seed-test.ts
+  },
+  netWorth: { byMonth: netWorth([...mainRows, ...bufferRows], SEEDED_ASSETS, months) },
+  // Normalized monthly commitments over the seeded template set (decision 003-E).
+  recurringCommitments: recurringCommitments(SEEDED_TEMPLATES),
   normalizationExamples: NORMALIZATION_SAMPLES.map((raw) => ({ raw, normalized: normalize(raw) })),
   // Opening-balance boundary (decision 002-E). All amounts are exact and
   // independent of the PRNG so the recompute can be asserted cent-for-cent.
