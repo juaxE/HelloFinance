@@ -66,6 +66,18 @@ function main(): void {
     .returning()
     .get();
 
+  // Rules must exist BEFORE analyzeImport: the pipeline reads `labeling_rules`
+  // once, at analyze time, and freezes each row's `proposed_category_id` into
+  // staging; commit only reads `chosen ?? proposed`. Seeded after the import,
+  // these rows would still show up on the Rules screen while having labelled
+  // nothing — a demonstration of the rule engine that quietly demonstrates
+  // nothing. Both targets are EXPENSE categories on purpose: `generate.mjs`
+  // computes the spec 003 M-definition from type hints as a proxy for the
+  // category rule, which stays faithful only while no seeded rule assigns an
+  // income-source category.
+  seedRule(db, 'K-MARKET', 'Groceries', 'K-Market Kamppi 4021');
+  seedRule(db, 'NETFLIX.COM', 'Subscriptions', 'NETFLIX.COM');
+
   const mainBytes = loadFixture(expected.files.main!.path);
   const mainImport = analyzeImport(db, {
     accountId: mainAccount.id,
@@ -81,9 +93,6 @@ function main(): void {
     bytes: bufferBytes,
   });
   const bufferCommit = commitImport(db, bufferImport.importId, { allowUncategorized: true });
-
-  seedRule(db, 'K-MARKET', 'Groceries', 'K-Market Kamppi 4021');
-  seedRule(db, 'NETFLIX.COM', 'Subscriptions', 'NETFLIX.COM');
 
   seedTemplates(db);
   seedAssets(db);

@@ -206,6 +206,44 @@ describe('spec 004 — category breakdown', () => {
     const magnitudes = breakdown.map((c) => Math.abs(c.amountCents));
     expect(magnitudes).toEqual([...magnitudes].sort((a, b) => b - a));
   });
+
+  /**
+   * The seed is legitimately Uncategorized-heavy — a fresh bulk import of a
+   * year of history, before any labelling, is exactly that (decision 002-C).
+   * What must NOT be true is that the seeded rules are inert: the pipeline
+   * resolves proposals at ANALYZE time, so a rule inserted after the import
+   * still shows up on the Rules screen while having labelled nothing. That
+   * failure is invisible to the criterion-2 sum above, which stays green
+   * whatever the per-category attribution does. `categorySource === 'rule'`
+   * is the guard: it fails loudly if the seeding ever moves back after the
+   * import in either seed path (`seed-test.ts` or `helpers.ts`).
+   */
+  it('criterion 2: the seeded labeling rules produce their own attributed slices, not one Uncategorized mass', async () => {
+    const breakdown = await get<CategoryBreakdownEntry[]>(`/api/dashboard/categories?month=${MONTH}`);
+    const monthRows = db
+      .select()
+      .from(transactions)
+      .all()
+      .filter((t) => t.paymentDate.startsWith(MONTH));
+
+    for (const [key, categoryName] of [
+      ['K-MARKET', 'Groceries'],
+      ['NETFLIX.COM', 'Subscriptions'],
+    ] as const) {
+      const ruled = monthRows.filter((t) => normalizeCounterparty(t.counterparty) === key);
+      expect(ruled.length, `${key} charges in ${MONTH}`).toBeGreaterThan(0);
+
+      // Assigned by the RULE engine — not a type hint, not a manual edit.
+      expect(ruled.every((t) => t.categorySource === 'rule')).toBe(true);
+      expect(ruled.every((t) => t.categoryId === categoryId(categoryName))).toBe(true);
+
+      // ...and that lands in the breakdown under the TRANSACTION's own
+      // category (003-M), at the summed magnitude of those rows.
+      const slice = breakdown.find((c) => c.categoryId === categoryId(categoryName));
+      expect(slice, `${categoryName} slice`).toBeDefined();
+      expect(slice!.amountCents).toBe(-ruled.reduce((s, t) => s + t.amountCents, 0));
+    }
+  });
 });
 
 describe('spec 004 — budget vs actual', () => {

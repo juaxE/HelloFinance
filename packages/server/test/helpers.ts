@@ -5,7 +5,7 @@ import { createDb, type Db } from '../src/db/client';
 import { runMigrations } from '../src/db/migrate';
 import { accounts } from '../src/db/schema';
 import { analyzeImport, commitImport } from '../src/import/pipeline';
-import { seedAssets, seedTemplates } from '../src/scripts/seed-data';
+import { seedAssets, seedRule, seedTemplates } from '../src/scripts/seed-data';
 
 /**
  * A fresh, fully-migrated in-memory database for a single test. Never touches
@@ -139,6 +139,13 @@ export function seedFixtureApp(db: Db): { mainAccountId: number; bufferAccountId
     })
     .returning()
     .get();
+
+  // Same two rules, in the same order, as `seed-test.ts` — before the import,
+  // since the pipeline resolves proposals at analyze time. Keeping the two seed
+  // paths in step is what lets a criterion assert rule-driven categorization
+  // instead of a DB where every non-type-hint row is Uncategorized.
+  seedRule(db, 'K-MARKET', 'Groceries', 'K-Market Kamppi 4021');
+  seedRule(db, 'NETFLIX.COM', 'Subscriptions', 'NETFLIX.COM');
 
   for (const [accountId, key, filename] of [
     [main.id, 'main', 'main-2025-07_2026-06.csv'],
