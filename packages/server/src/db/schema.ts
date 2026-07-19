@@ -1,7 +1,7 @@
 /**
  * Drizzle schema for the SQLite database — the full MVP data model.
  *
- * Owned by specs/001-data-model.md. Conventions (every table):
+ * Conventions (every table):
  *   - Money: integer `_cents` columns, signed; never floats (non-negotiable #3).
  *   - Business dates (booking/payment/period): text ISO `YYYY-MM-DD`, no time/tz.
  *   - Months: text `YYYY-MM`.

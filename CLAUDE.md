@@ -1,12 +1,13 @@
 # CLAUDE.md — Personal Finance Tracker
 
-Local-first personal finance app for a single user (built by AI agents, reviewed by
-the owner, a professional software engineer — communicate accordingly: no basics,
-justify non-obvious decisions, push back when a spec seems wrong).
+## What this is
 
-Tracks income, expenses, budgets with recurring expenses, and net worth
-(accounts + investments + emergency fund − loans). Data is imported from bank CSV
-exports and labeled via a learned rule engine with user confirmation.
+A local-first personal finance tracker for a single user: income, expenses,
+budgets with recurring bills, and net worth. Data is imported from bank CSV
+exports and labeled by a learned rule engine with user confirmation. Built by AI
+agents and reviewed by the owner, a professional software engineer — communicate
+accordingly: no basics, justify non-obvious decisions, push back when something
+seems wrong.
 
 ## Non-negotiables (never violate, never "improve")
 
@@ -32,119 +33,200 @@ exports and labeled via a learned rule engine with user confirmation.
    banking/domain terms and the translation is ambiguous, ask the owner instead of
    guessing.
 
-## Tech stack (settled — do not re-litigate)
+## Stack (settled — do not re-litigate)
 
-- TypeScript everywhere, single monorepo, npm workspaces
-- Backend: Fastify, SQLite via better-sqlite3 + Drizzle ORM, Zod validation
-- Frontend: Vite + React, Recharts for visualizations
-- Shared types package between API and UI
-- Tests: Vitest (unit/integration, in-memory or tempfile SQLite), Playwright (e2e)
-- Runs with one command (`npm run dev`); production-ish mode via one command too
+TypeScript everywhere, single monorepo, npm workspaces. Backend: Fastify, SQLite
+via better-sqlite3 + Drizzle ORM, Zod validation. Frontend: Vite + React, Recharts.
+Shared types package between API and UI. Tests: Vitest (in-memory or tempfile
+SQLite), Playwright (e2e). Runs with one command (`npm run dev`).
 
+```
+CLAUDE.md
+fixtures/        # synthetic S-Pankki CSVs + expected.json (never real data)
+packages/
+  shared/        # zod schemas + shared types
+  server/        # fastify app, db schema, migrations, import pipeline, budgets, dashboard
+  web/           # vite + react app
+```
 
-## Validation
+## Domain overview
+
+**Accounts.** Multiple from day one (main + buffer/emergency fund; the emergency
+fund is a bank account, not an asset). The bank CSV has no running-balance column,
+so balance is derived — this boundary is load-bearing, it is what stops back-filled
+history from double-counting:
+
+```
+balance(D) = opening + Σ amount WHERE opening_balance_date ≤ payment_date ≤ D
+```
+
+`opening_balance_cents` is the real balance at the **start of**
+`opening_balance_date`. Null `opening_balance_date` ⇒ no lower bound, opening 0.
+Rows dated before the opening date are rejected at import, never silently dropped.
+
+**Transactions & categories.** Payment date is the primary date (booking date
+stored too), integer cents, counterparty, type, reference, message, archive ID, one
+category, and a `category_source` of `manual | rule | type_hint` (`manual` always
+wins). Categories are a flat user-editable list plus system built-ins `Transfer` and
+`Income`. `category_id = null` is **Uncategorized** (not yet reviewed) — a distinct
+state from the reviewed catch-all **Other**. Every aggregate splits categories three
+ways:
+
+- **Transfer** (`system_key='transfer'`) — excluded from every aggregate.
+- **Income-source** (`is_income_source=true`) — counts as income.
+- **Expense** (everything else, including **Uncategorized** = `category_id null`).
+
+**Labeling rules.** `normalized_counterparty → category`, learned from user
+decisions. Normalization uppercases, strips noise prefixes (`PAYPAL *`, `VFI*`,
+`MOB.PAY*`), trailing processor codes, store numbers, and collapses known brands
+(`ALEPA KAMPPI` → `ALEPA`) so locations share one rule.
+
+**Bills vs envelopes** — two instruments, never conflated. A **bill** is a
+`recurring_template` (fixed amount, cadence, due day, required counterparty) that
+materializes a snapshot line into each due month; editing it affects **future**
+months only, since materialized months are a historical record. A template is due
+in month M iff `M ≥ start_month` and (`end_month` is null or `M ≤ end_month`), and
+`monthsBetween(start_month, M) mod interval_months == 0`, where
+`monthsBetween(a, b) = (b.year·12 + b.month) − (a.year·12 + a.month)`. The
+per-occurrence amount is snapshotted **as-is, no division**. An **envelope** is a
+per-month goal for a category, set by hand, never materialized from anything and
+never carried forward.
+
+| `kind`      | `match_normalized_counterparty` | `template_id` | `expected_day_of_month` | reconciles as         |
+| ----------- | ------------------------------- | ------------- | ----------------------- | --------------------- |
+| `recurring` | **required**                    | set           | set (clamped)           | always named          |
+| `adhoc`     | **required**                    | null          | optional                | always named          |
+| `envelope`  | **must be null**                | null          | null                    | always category-level |
+
+**Reconciliation** has exactly two behaviors, determined by the **match key**, never
+by `kind` (`kind` is provenance):
+
+- **Named lines** (`match_normalized_counterparty` non-null — recurring or ad-hoc)
+  **consume** their counterparty's transactions.
+- **Envelopes** (no match key) take their category's **remainder**.
+
+Matching is strictly within the month; an unmatched line reads *pending*, and a bill
+that posts late surfaces as unbudgeted in the month it landed. Actuals are never
+stored — always recomputed from transactions, so they survive re-imports and
+relabels. The set being reconciled over is **M = the expense bucket**: it excludes
+`Transfer` and every `is_income_source` category, and **includes** uncategorized
+rows (which surface as their own "Needs review" bucket, with signed amounts).
+Remaining rows in a category with **no envelope** are *unbudgeted*.
+
+**Assets & net worth.** Manual monthly snapshots for investments and loans (no live
+pricing, no amortization). Snapshots carry forward: the latest with `month ≤ M`, so
+a skipped month reuses the last value instead of dropping to zero.
+
+```
+netWorth(M) =  Σ account_balance(account, monthEnd(M))   over all accounts (incl. the buffer / emergency fund)
+             + Σ latest snapshot with month ≤ M           for kinds {investment, other}
+             − Σ latest snapshot with month ≤ M           for kind loan
+```
+
+## S-Pankki CSV adapter
+
+Adapter interface per bank; S-Pankki is the only implementation. Semicolon-delimited;
+Finnish header row mapped **by name**, not position; encoding detected (UTF-8 vs
+ISO-8859-1), never assumed. Columns: Kirjauspäivä (booking date), Maksupäivä (payment
+date), Summa, Tapahtumalaji (type), Maksaja (payer), Saajan nimi (payee), Saajan
+tilinumero, Viitenumero, Viesti, Arkistointitunnus (dedup key). Dates `DD.MM.YYYY`;
+amounts signed with decimal comma (`-83,22`). `'-'` means empty; messages are wrapped
+in a leading apostrophe + quotes; IBAN fields may contain stray spaces. Counterparty
+for labeling is payee for outgoing, payer for incoming. Type hints: `OMA TILISIIRTO`
+→ Transfer, `PALKKA` → Income.
+
+Import flow: upload CSV → parse & dedup → review screen with proposed labels → user
+confirms/corrects (**bulk "apply to all similar" is required**; one-by-one prompting
+is not acceptable — the owner bulk-imports ~1 year of history) → commit + persist
+learned rules.
+
+## Tripwires (each one is a bug someone already tried to write)
+
+- No `ON DELETE` on `budget_lines.template_id`; retire a template via `end_month`,
+  never delete once materialized — past months are history.
+- No uniqueness constraint on `content_hash` — two identical purchases the same day
+  are legal; `archive_id` is the dedup key.
+- Archived assets stay in net-worth queries — excluding them rewrites history.
+  Retire an asset by entering a closing `0` snapshot, *then* archiving.
+- `Transfer` and `Income` cannot be deleted, renamed, archived, or have
+  `is_income_source` flipped — Transfer exclusion breaks everywhere otherwise.
+- Never divide money outside the commitments stat (half-up, away from zero, per
+  template); integer cents everywhere else, no floats ever.
+- **M** (reconciliation set) = the expense bucket: excludes Transfer and
+  income-source, **includes** uncategorized — both sides of every tie-out, or neither.
+- Named-line attribution: the budgets month view reports under the **line's**
+  category, the dashboard under the **transaction's**. Per-category divergence after
+  a relabel is specified behavior, not a bug; the totals must still agree.
+- Unbudgeted is keyed on the absence of an **envelope**, not of any line — a category
+  with only a named line would otherwise drop its other spend out of the partition.
+- Match keys: required on templates and ad-hoc lines, forbidden on envelopes, unique
+  across non-ended templates and per month — no insert path may bypass that check.
+- Envelopes are never auto-created (not from templates, prefill, or previous months)
+  — zero envelopes **is** the "not budgeted yet" signal.
+- Templates and lines may not target `Transfer` or an income-source category — they
+  could never reconcile and would sit permanently pending.
+- Editing `opening_balance_date` forward past committed transactions is rejected — it
+  silently drops rows from the balance window.
+- The extend-history assist is offered only when the file bridges the gap
+  (`max(payment_date) ≥ old opening date`) — a partial file corrupts the opening balance.
+- Seeded labeling rules must be inserted **before** `analyzeImport` (proposals are
+  resolved at analyze time and frozen into staging), in **both** seed paths —
+  `seed-test.ts` and `test/helpers.ts`. A rule seeded after the import still shows on
+  the Rules screen while having labeled nothing.
+- No seeded labeling rule may target an **income-source** category: `generate.mjs`
+  computes the M-definition from type hints as a proxy for the category rule, and that
+  proxy holds only while type hints are the sole source of category assignment.
+- No-auth is valid ONLY behind 127.0.0.1. Any public deployment (e.g. the planned
+  fly.io demo) must be demo-mode — non-persistent DB, synthetic seed only, real
+  imports disabled — or grow auth first.
+- Every confirm-then-act UI flow needs a test for the **decline** path — the
+  archive-on-cancel bug shipped because only the accept path was tested.
+- `FINANCE_NOW` gates budget materialization and the past-month write lock, not just
+  display — it must fail loudly on bad values and must never be set outside tests.
+- Real data never enters the repo, fixtures, tests, or agent context; dev and test
+  runs must be structurally unable to open the real DB under `data/`.
+
+## Workflow
+
+A new feature starts as a short proposal file: behavior, data model changes, API
+surface, acceptance criteria, explicitly deferred parts. It exists **only** for the
+owner's review round. On merge its durable residue is criterion-named tests plus any
+new tripwire lines, and the proposal file is deleted — the tests are the spec.
+
+- Name tests after the criterion they prove (`criterion 7: …`), so a criterion can be
+  traced to its proof.
+- **Behavioral silences during implementation are stop-and-ask**, never
+  resolved-in-notes. A silence you resolve quietly becomes a rule nobody agreed to.
+- Every merged change that rejected a tempting alternative adds a tripwire line above.
+- Keep diffs reviewable: small commits, no drive-by refactors, no speculative
+  abstraction.
+- Commit + green `npm run check` is the exit state of every session.
+
+### Validation
 
 An implementation is validated only when all of the following hold, in order:
 
 1. `npm run typecheck && npm run lint` — clean.
-2. `npm test` — all Vitest suites green. Integration tests use in-memory or
-   tempfile SQLite; never touch `data/*.db`.
-3. Seed a known dataset: `npm run seed:test` loads fixtures with known
-   totals (fixture expectations live in `fixtures/expected.json`).
-4. Exercise the real app: start `npm run dev`, then verify the changed
-   behavior end-to-end via Playwright (`npm run e2e`, plus a targeted spec
-   for the new feature if one doesn't exist — write it).
-5. Evidence requirements:
-   - For any change touching import, categorization, or computation:
-     assert computed balances/reports against `fixtures/expected.json`
-     and include the assertion output.
-   - For any UI change: Playwright screenshot of the changed view with
-     seeded data visible.
-6. Numbers shown in the UI must reconcile with numbers computed by the API
-   for the same seed data. A mismatch is a critical finding, not a rounding
-   footnote.
+2. `npm test` — all Vitest suites green. Integration tests use in-memory or tempfile
+   SQLite; never touch `data/*.db`.
+3. `npm run seed:test` loads fixtures with known totals (`fixtures/expected.json`).
+4. Exercise the real app: `npm run dev`, then verify the changed behavior end-to-end
+   via Playwright (`npm run e2e`, plus a targeted spec for the new feature — write one
+   if it doesn't exist). Note that `npm run check` does **not** run e2e.
+5. For any change touching import, categorization, or computation: assert computed
+   balances/reports against `fixtures/expected.json` and include the output. For any
+   UI change: a Playwright screenshot of the changed view with seeded data visible.
+6. Numbers shown in the UI must reconcile with numbers computed by the API for the
+   same seed data. A mismatch is a critical finding, not a rounding footnote.
+7. Passing tests are not evidence a feature works. Say "verified end-to-end" only
+   after exercising the running app, and always report what you did **not** test.
 
-### Not covered by automated validation (escalate instead)
+**Not covered by automated validation — escalate instead:** anything requiring real
+transaction data; visual/aesthetic judgment beyond "renders without error".
 
-- Anything requiring my real transaction data.
-- Visual/aesthetic judgment beyond "renders without error".
+## Explicitly deferred (do not build without an approved proposal)
 
-## Repo layout
-
-```
-CLAUDE.md
-specs/           # numbered feature specs; source of truth for behavior
-fixtures/        # synthetic S-Pankki CSVs and seed data (never real data)
-packages/
-  shared/        # zod schemas + shared types
-  server/        # fastify app, db schema, migrations, import pipeline
-  web/           # vite + react app
-```
-
-## Workflow (spec-gated)
-
-1. Every feature starts as a spec in `specs/NNN-name.md`: behavior, data model
-   changes, API surface, acceptance criteria, explicitly deferred parts.
-2. The owner reviews and approves the spec before implementation.
-3. Implementation must include tests proving the acceptance criteria. A feature is
-   not done until `npm run check` (typecheck + lint + tests) passes.
-4. Keep diffs reviewable: small commits, no drive-by refactors, no speculative
-   abstraction. Note follow-up ideas at the bottom of the relevant spec instead of
-   implementing them.
-
-## Domain model (summary — details live in specs)
-
-- **Account**: multiple bank accounts supported from day one (main + buffer/
-  emergency fund). Transactions belong to an account.
-- **Transaction**: imported row; payment date is the primary date (booking date
-  stored too), integer cents, counterparty, type, reference, message, archive ID,
-  one category. Category assignment records its source: `rule` or `manual`.
-- **Category**: flat list (~15 to start), user-editable, plus special built-ins:
-  `Transfer` (excluded from all income/expense aggregates; used for moves between
-  own accounts) and `Income`. Future (not MVP): split transactions via a
-  transaction→lines table; keep this in mind, do not build it.
-- **Labeling rules**: normalized-counterparty → category mappings, learned from user
-  labeling decisions. Manual label always beats rule. Relabeling a transaction asks
-  whether to update the rule or apply one-off. Normalization strips noise prefixes
-  (`PAYPAL *`, `VFI*`, `MOB.PAY*`), store numbers, and casing.
-- **Recurring expense template**: name, category, amount_cents, expected day-of-
-  month, start date, optional end date. Editing a template affects only months
-  materialized after the edit; past budget lines are historical record.
-- **Budget (monthly)**: materialized from active templates when the month is
-  created; lines are editable/deletable; ad-hoc one-off lines can be added.
-  Reconciliation: named recurring lines match by counterparty rule; everything else
-  reconciles at category level (budget line vs. sum of that category's transactions
-  in the month).
-- **Asset snapshot**: manual monthly values for investments, emergency fund, and
-  loans (loans are negative in net worth). No live pricing, no amortization math.
-- **Net worth** = latest account balances + asset snapshots − loan balances.
-
-## S-Pankki CSV adapter
-
-Adapter interface per bank; S-Pankki is the only implementation for now.
-Format facts (verified against sample in `fixtures/`):
-
-- Semicolon-delimited; header row in Finnish; encoding must be detected
-  (UTF-8 vs ISO-8859-1), not assumed
-- Columns: Kirjauspäivä (booking date), Maksupäivä (payment date), Summa (amount),
-  Tapahtumalaji (type), Maksaja (payer), Saajan nimi (payee), Saajan tilinumero,
-  Saajan BIC-tunnus, Viitenumero (reference), Viesti (message), Arkistointitunnus
-  (unique archive ID → dedup key)
-- Dates `DD.MM.YYYY`; amounts signed with decimal comma (`-83,22`, `+2826,41`)
-- `'-'` (with leading apostrophe) means empty; messages are wrapped in a leading
-  apostrophe + quotes; IBAN fields may contain stray internal/trailing spaces
-- Counterparty for labeling: payee for outgoing, payer for incoming
-- Type hints for auto-labeling: `OMA TILISIIRTO` → Transfer, `PALKKA` → Income
-
-## Import & labeling flow (first-class app feature, not a separate script)
-
-Upload CSV → parse & dedup → review screen listing transactions with proposed
-labels → user confirms/corrects (bulk "apply to all similar" is required, one-by-one
-prompting is not acceptable — the owner will bulk-import ~1 year of history) →
-commit + persist learned rules.
-
-## Explicitly deferred (do not build without a new approved spec)
-
-Split transactions, live investment pricing, multi-currency, additional bank
-adapters, automatic transfer pair-matching, desktop packaging, Windows support,
-auth, income budgeting, hierarchical categories.
+Split transactions, transaction-level reimbursement linking, sinking funds, budget
+rollover, income budgeting, live investment pricing, multi-currency, additional bank
+adapters, automatic transfer pair-matching, hierarchical categories, desktop
+packaging, Windows support, auth.

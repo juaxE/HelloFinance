@@ -21,12 +21,10 @@ import { registerTransactionRoutes } from './routes/transactions';
 export type AppOptions = { now?: () => Date };
 
 /**
- * Build the Fastify application over an already-migrated database. Feature
- * routes are registered here per the approved specs under `specs/`; spec 001
- * adds the accounts and categories reference resources, spec 002 adds CSV
- * import/review, labeling rules, and transactions. Spec 003 adds recurring
- * templates and budget months. Spec 004 adds the read-only dashboard
- * aggregates and asset snapshots.
+ * Build the Fastify application over an already-migrated database. Registers
+ * the accounts and categories reference resources; CSV import/review, labeling
+ * rules and transactions; recurring templates and budget months; and the
+ * read-only dashboard aggregates and asset snapshots.
  *
  * There is deliberately no auth layer: the server binds to loopback only and
  * localhost auth would be theater (CLAUDE.md non-negotiable #2).
