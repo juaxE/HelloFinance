@@ -14,6 +14,7 @@
   ],
   "scripts": {
     "dev": "concurrently -n server,web -c blue,green \"npm run dev -w @finance/server\" \"npm run dev -w @finance/web\"",
+    "start": "concurrently --kill-others-on-fail -n server,web -c blue,green \"FINANCE_MODE=real npm run start -w @finance/server\" \"npm run dev -w @finance/web\"",
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "eslint .",

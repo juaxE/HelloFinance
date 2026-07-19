@@ -18,6 +18,7 @@ describe('GET /health', () => {
   it('returns 200 with status ok', async () => {
     const res = await app.inject({ method: 'GET', url: '/health' });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ status: 'ok' });
+    // `mode` defaults to dev for a test-built app; see db-mode.test.ts.
+    expect(res.json()).toEqual({ status: 'ok', mode: 'dev' });
   });
 });

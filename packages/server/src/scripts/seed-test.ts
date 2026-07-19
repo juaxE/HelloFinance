@@ -1,10 +1,13 @@
 /**
  * `npm run seed:test` (CLAUDE.md validation §3): loads the synthetic
- * fixtures into `data/app.db` with known totals so the dev app has real data
- * to look at, and integration checks can assert against
+ * fixtures into `data/dev.db` with known totals so the dev app has real-looking
+ * data to look at, and integration checks can assert against
  * `fixtures/expected.json`. Real data never enters development (CLAUDE.md
- * non-negotiable #5) — this is the ONLY thing that should ever populate
- * `data/app.db`.
+ * non-negotiable #5).
+ *
+ * The path is `DEV_DATABASE_PATH`, hard-wired: this script never reads
+ * `FINANCE_MODE`, because what it writes is synthetic by construction and there
+ * is no mode under which it should target the real database (proposal 005).
  *
  * Seeds:
  *  - Main + Buffer accounts, opening balance 0 on 2025-07-01 (before every
@@ -24,13 +27,13 @@
 import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DATABASE_PATH } from '../config';
+import { DEV_DATABASE_PATH } from '../config';
 import { createDb } from '../db/client';
 import { runMigrations } from '../db/migrate';
 import { accounts } from '../db/schema';
 import { analyzeImport, commitImport } from '../import/pipeline';
 import { FIXTURE_EXPECTATIONS as expected, seedAssets, seedRule, seedTemplates } from './seed-data';
-import { assertSeedableDatabase, markSyntheticSeed } from './seed-guard';
+import { assertSeedableDatabase, markSyntheticSeed } from '../db/marker';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURES_ROOT = resolve(HERE, '../../../../fixtures');
@@ -48,12 +51,22 @@ function loadFixture(relPath: string): Buffer {
 
 function main(): void {
   // Only a DB this script itself created may be overwritten — the real DB has
-  // no marker and makes this throw (audit B2; see seed-guard.ts).
-  assertSeedableDatabase(DATABASE_PATH);
-  resetDatabaseFile(DATABASE_PATH);
-  const db = createDb(DATABASE_PATH);
-  runMigrations(db);
-  markSyntheticSeed(db);
+  // no marker and makes this throw (audit B2; see db/marker.ts).
+  assertSeedableDatabase(DEV_DATABASE_PATH);
+  resetDatabaseFile(DEV_DATABASE_PATH);
+  const db = createDb(DEV_DATABASE_PATH);
+  try {
+    runMigrations(db);
+    markSyntheticSeed(db);
+  } catch (err) {
+    // Failing here would strand an unmarked dev.db that this script just
+    // created: the dev server would then refuse it as "may hold real data" and
+    // seed:test would refuse to overwrite it, a deadlock clearable only by
+    // hand. The file is ours and pre-seed, so take it back out.
+    db.$client.close();
+    resetDatabaseFile(DEV_DATABASE_PATH);
+    throw err;
+  }
 
   const mainAccount = db
     .insert(accounts)
@@ -111,7 +124,7 @@ function main(): void {
 
   console.log(
     [
-      `Seeded ${DATABASE_PATH}`,
+      `Seeded ${DEV_DATABASE_PATH}`,
       `  Main account #${mainAccount.id}: ${mainCommit.inserted} committed (${mainCommit.uncategorized} uncategorized)`,
       `  Buffer account #${bufferAccount.id}: ${bufferCommit.inserted} committed (${bufferCommit.uncategorized} uncategorized)`,
       `  2 labeling rules seeded (K-MARKET -> Groceries, NETFLIX.COM -> Subscriptions)`,

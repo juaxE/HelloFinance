@@ -235,8 +235,22 @@ learned rules.
   archive-on-cancel bug shipped because only the accept path was tested.
 - `FINANCE_NOW` gates budget materialization and the past-month write lock, not just
   display — it must fail loudly on bad values and must never be set outside tests.
-- Real data never enters the repo, fixtures, tests, or agent context; dev and test
-  runs must be structurally unable to open the real DB under `data/`.
+  **Real mode refuses to start with it set**, so "outside tests" is structural.
+- Real data never enters the repo, fixtures, tests, or agent context. The mechanism
+  is `FINANCE_MODE` (`real` → `data/app.db`, `dev` → `data/dev.db`), which has **no
+  default** — unset or invalid refuses to start, since guessing is how real data ends
+  up under a dev workflow. The `_synthetic_seed` marker is checked in **both**
+  directions: real mode refuses a marked DB, dev mode refuses an unmarked one, and
+  dev stamps the marker on any fresh DB it creates. There is deliberately no path
+  override (no `DATABASE_URL`) — an override walks straight past both guards. The
+  residual hole is a real CSV imported into a dev instance, which nothing can detect
+  from file contents; the permanent dev banner in the app shell is the accepted
+  mitigation, so it must stay visible on every view and stay non-dismissible.
+- `seed:test` seeds the dev path unconditionally and never reads `FINANCE_MODE` —
+  what it writes is synthetic by construction, and there is no mode under which it
+  should target the real DB. `assertSeedableDatabase` stays as defense in depth.
+- drizzle-kit is pinned to the dev DB. The real DB receives migrations only at
+  server startup (`index.ts` → `openDatabaseForMode` → `runMigrations`).
 
 ## Workflow
 

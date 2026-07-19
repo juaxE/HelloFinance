@@ -15,6 +15,10 @@ build/
 *.sqlite3
 data/
 
+# Any real bank export kept locally for reference (README claims this is ignored;
+# non-negotiable #5 — real data never enters the repo, tests, or agent context)
+fixtures/private/
+
 # Playwright
 packages/web/test-results/
 packages/web/playwright-report/
@@ -26,7 +30,6 @@ packages/web/playwright/.cache/
 npm-debug.log*
 .env
 .env.*
-!.env.example
 .DS_Store
 .idea/
 .vscode/

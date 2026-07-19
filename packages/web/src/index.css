@@ -11,6 +11,10 @@
   --accent-contrast: #ffffff;
   --danger: #c0392b;
   --warn: #a76a00;
+  /* Banner fill. `--warn` alone as banner text is 4.46:1 on the card — under
+     the 4.5:1 AA floor — so the notice carries its copy in `--text` over this
+     tint and spends `--warn` on the border (non-text, 3:1 floor). */
+  --warn-surface: #fdf6e8;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -26,6 +30,7 @@
     --accent-contrast: #10233f;
     --danger: #e57373;
     --warn: #e0a33a;
+    --warn-surface: #2a2013;
   }
 }
 
