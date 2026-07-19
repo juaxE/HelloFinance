@@ -183,6 +183,12 @@ learned rules.
 - Playwright runs `workers: 1`: every spec shares one seeded `data/app.db` and several
   mutate it. Parallel specs interleave with the ones asserting the DOM against a
   freshly-fetched API figure, which is a race, not a flake to retry away.
+- A running `npm run dev` server **hijacks the e2e suite**: `reuseExistingServer`
+  adopts whatever answers on :3001 without applying the config's `FINANCE_NOW`, and
+  that process keeps an open handle to the `data/app.db` that `seed:test` unlinked —
+  so the suite runs unpinned against a stale database and fails far from the cause.
+  The `setup` project asserts the server's month before anything else runs; never
+  delete that gate, and stop the dev server before running e2e.
 - Archived assets stay in net-worth queries — excluding them rewrites history.
   Retire an asset by entering a closing `0` snapshot, *then* archiving.
 - `Transfer` and `Income` cannot be deleted, renamed, archived, or have

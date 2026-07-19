@@ -14,7 +14,6 @@ import {
 } from 'recharts';
 import {
   formatEur,
-  type AssetSnapshotEntry,
   type BudgetTrendPoint,
   type CashFlowPoint,
   type CategoryTrend,
@@ -23,7 +22,6 @@ import {
   type RecurringCommitments,
 } from '@finance/shared';
 import { api } from '../api';
-import { parseEurosToCents } from '../format';
 
 /**
  * The dashboard (spec 004): net worth, cash flow, income sources, per-category
@@ -229,14 +227,6 @@ export function DashboardPage({
   const [budget, setBudget] = useState<BudgetTrendPoint[]>([]);
   const [commitments, setCommitments] = useState<RecurringCommitments | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  /**
-   * The current month comes from the SERVER (the commitments endpoint reports
-   * the month it used), never from the browser clock. Only the asset-snapshot
-   * form needs it now — that is a write surface for this month, and a snapshot
-   * is a stock, so "this month" is the right and only target.
-   */
-  const month = commitments?.month ?? null;
 
   /**
    * Each loader stamps its request and drops the result if a newer one started
@@ -678,8 +668,6 @@ export function DashboardPage({
             </ul>
           </Card>
         </div>
-
-        {month && <AssetSnapshotCard month={month} onSaved={() => loadTrends(window_)} />}
       </div>
     </div>
   );
@@ -792,196 +780,5 @@ function SpendingTrend({
         ))}
       </ul>
     </>
-  );
-}
-
-/**
- * The archive confirmation. A still-carrying asset gets all three outcomes as
- * explicit buttons; a zero/absent one only needs archive-or-back-out.
- */
-function ArchiveConfirm({
-  entry,
-  month,
-  onChoose,
-  onCancel,
-}: {
-  entry: AssetSnapshotEntry;
-  month: string;
-  onChoose: (zeroFirst: boolean) => void;
-  onCancel: () => void;
-}) {
-  const carrying = entry.valueCents !== null && entry.valueCents !== 0;
-  return (
-    <div
-      role="alertdialog"
-      aria-label={`Archive ${entry.name}`}
-      data-testid="archive-confirm"
-      style={{
-        border: '1px solid var(--border)',
-        borderRadius: 4,
-        padding: '0.6rem',
-        marginTop: '0.5rem',
-        fontSize: '0.8rem',
-      }}
-    >
-      <p style={{ margin: '0 0 0.5rem' }}>
-        {carrying ? (
-          <>
-            <strong>{entry.name}</strong> last reported {formatEur(entry.valueCents!)}. Archiving
-            only hides it from this form — that value keeps counting in net worth every month from
-            now on.
-          </>
-        ) : (
-          <>
-            Archive <strong>{entry.name}</strong>? It disappears from this form; its history is
-            kept.
-          </>
-        )}
-      </p>
-      <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
-        {carrying && (
-          <button data-testid="archive-zero-first" onClick={() => onChoose(true)}>
-            Close at 0 for {month}, then archive
-          </button>
-        )}
-        <button data-testid="archive-anyway" onClick={() => onChoose(false)}>
-          {carrying ? 'Archive anyway' : 'Archive'}
-        </button>
-        <button data-testid="archive-cancel" onClick={onCancel}>
-          Cancel
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/**
- * Snapshot entry for the month. Archived assets are absent (decision 004-F), and
- * archiving a still-carrying asset offers the closing `0` first, which is the
- * intended way to retire a paid-off loan or a liquidated investment.
- *
- * The confirmation is an inline panel rather than `window.confirm` because the
- * carrying case is a genuine THREE-way choice — zero-then-archive, archive
- * anyway, or back out — and a two-way native confirm has no way to express it.
- * Archiving while a non-zero value carries forward strands that value in net
- * worth for every future month with no way back through the UI, so backing out
- * has to be reachable and must never be the fall-through.
- */
-function AssetSnapshotCard({ month, onSaved }: { month: string; onSaved: () => Promise<void> }) {
-  const [entries, setEntries] = useState<AssetSnapshotEntry[]>([]);
-  const [drafts, setDrafts] = useState<Record<number, string>>({});
-  const [status, setStatus] = useState<string | null>(null);
-  const [pendingArchive, setPendingArchive] = useState<AssetSnapshotEntry | null>(null);
-
-  const load = useCallback(async () => {
-    const rows = await api.getAssetSnapshots(month);
-    setEntries(rows);
-    setDrafts(
-      Object.fromEntries(
-        rows.map((r) => [r.assetId, r.valueCents === null ? '' : formatEur(r.valueCents)]),
-      ),
-    );
-  }, [month]);
-
-  useEffect(() => {
-    load().catch(() => undefined);
-  }, [load]);
-
-  async function save() {
-    const values: { assetId: number; valueCents: number }[] = [];
-    for (const entry of entries) {
-      const parsed = parseEurosToCents(drafts[entry.assetId] ?? '');
-      if (parsed === 'invalid') {
-        setStatus(`"${entry.name}" is not a valid amount`);
-        return;
-      }
-      // Omitted rather than zeroed: a blank field means "no value entered", and
-      // the API leaves an omitted asset untouched.
-      if (parsed === null) continue;
-      values.push({ assetId: entry.assetId, valueCents: parsed });
-    }
-    await api.saveAssetSnapshots(month, values);
-    setStatus(`Saved ${values.length} value(s) for ${month}`);
-    await load();
-    await onSaved();
-  }
-
-  /** `zeroFirst` writes the closing 0 for `month` before archiving. */
-  async function archive(entry: AssetSnapshotEntry, zeroFirst: boolean) {
-    setPendingArchive(null);
-    if (zeroFirst) {
-      await api.saveAssetSnapshots(month, [{ assetId: entry.assetId, valueCents: 0 }]);
-    }
-    await api.patchAsset(entry.assetId, { archived: true });
-    setStatus(
-      zeroFirst
-        ? `Archived "${entry.name}" after closing it at 0,00 €`
-        : `Archived "${entry.name}"`,
-    );
-    await load();
-    await onSaved();
-  }
-
-  return (
-    <Card title="Asset values" subtitle={month}>
-      <p style={{ fontSize: '0.75rem', color: 'var(--muted)', marginTop: 0 }}>
-        Loans are entered as positive balances and subtracted in net worth.
-      </p>
-      <ul style={{ listStyle: 'none', margin: 0, padding: 0 }} data-testid="asset-entry">
-        {entries.map((entry) => (
-          <li
-            key={entry.assetId}
-            data-testid={`asset-${entry.assetId}`}
-            data-cents={entry.valueCents ?? ''}
-            style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.4rem' }}
-          >
-            <label style={{ flex: 1, fontSize: '0.85rem' }}>
-              {entry.name}
-              <span style={{ color: 'var(--muted)' }}> · {entry.kind}</span>
-              {entry.carriedForward && (
-                <span style={{ color: 'var(--muted)', fontSize: '0.75rem' }}>
-                  {' '}
-                  (carried from {entry.sourceMonth})
-                </span>
-              )}
-            </label>
-            <input
-              aria-label={`${entry.name} value`}
-              value={drafts[entry.assetId] ?? ''}
-              onChange={(e) => setDrafts((d) => ({ ...d, [entry.assetId]: e.target.value }))}
-              style={{ width: '9rem', textAlign: 'right' }}
-            />
-            <button
-              onClick={() => setPendingArchive(entry)}
-              style={{ fontSize: '0.75rem' }}
-              data-testid={`archive-${entry.assetId}`}
-            >
-              Archive
-            </button>
-          </li>
-        ))}
-      </ul>
-      {pendingArchive && (
-        <ArchiveConfirm
-          entry={pendingArchive}
-          month={month}
-          onChoose={(zeroFirst) =>
-            archive(pendingArchive, zeroFirst).catch((e) => {
-              setPendingArchive(null);
-              setStatus(String(e));
-            })
-          }
-          onCancel={() => setPendingArchive(null)}
-        />
-      )}
-      <button onClick={() => save().catch((e) => setStatus(String(e)))} style={{ marginTop: '0.5rem' }}>
-        Save {month}
-      </button>
-      {status && (
-        <p role="status" style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>
-          {status}
-        </p>
-      )}
-    </Card>
   );
 }

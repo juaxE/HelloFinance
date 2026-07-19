@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { AssetsPage } from './components/AssetsPage';
 import { BudgetsPage } from './components/BudgetsPage';
 import { DashboardPage } from './components/DashboardPage';
 import { ImportPage } from './components/ImportPage';
@@ -7,13 +8,14 @@ import { TransactionsPage } from './components/TransactionsPage';
 import { TriagePage } from './components/TriagePage';
 import { api } from './api';
 
-type View = 'dashboard' | 'import' | 'transactions' | 'triage' | 'budgets' | 'rules';
+type View = 'dashboard' | 'import' | 'transactions' | 'triage' | 'budgets' | 'assets' | 'rules';
 
 const VIEWS: Array<{ id: View; label: string }> = [
   { id: 'dashboard', label: 'Dashboard' },
   { id: 'import', label: 'Import' },
   { id: 'transactions', label: 'Transactions' },
   { id: 'budgets', label: 'Budgets' },
+  { id: 'assets', label: 'Assets' },
   { id: 'rules', label: 'Rules' },
 ];
 
@@ -89,6 +91,7 @@ export function App() {
           />
         )}
         {view === 'budgets' && <BudgetsPage />}
+        {view === 'assets' && <AssetsPage />}
         {view === 'rules' && <RulesPage />}
       </main>
     </div>

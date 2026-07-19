@@ -18,7 +18,16 @@ export default defineConfig({
     baseURL: BASE_URL,
     trace: 'on-first-retry',
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  projects: [
+    // Gates every spec: a reused dev server silently defeats FINANCE_NOW and the
+    // reseed. See environment.setup.ts.
+    { name: 'setup', testMatch: /environment\.setup\.ts$/ },
+    {
+      name: 'chromium',
+      use: { ...devices['Desktop Chrome'] },
+      dependencies: ['setup'],
+    },
+  ],
   webServer: [
     {
       // Reseeds data/app.db from fixtures (CLAUDE.md validation §3), then
