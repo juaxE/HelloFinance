@@ -155,6 +155,20 @@ learned rules.
   import, that is the signal to revisit `(account_id, archive_id)` — which would cost
   the wrong-account detection, so it is a trade, not a free fix. Do not "harden" this
   pre-emptively.
+- Triage bulk-apply writes `category_source='rule'`, never `'manual'`, whenever a
+  labeling rule maps that key to the chosen category — the rows are rule-derived and
+  must follow a later correction to it. `manual` is the tempting shortcut and would
+  permanently exempt a whole counterparty's history from ever being corrected.
+- Triage only ever INSERTs a labeling rule, never UPDATEs one: both routes to an
+  update (`rememberRule` over an existing rule, or picking a different category) are
+  409s. Rewriting a rule also retroactively relabels rule-sourced rows outside the
+  triage view, and that blast radius belongs on the Rules screen where it is visible.
+- The relabel sweep in `routes/transactions.ts` filters `category_source='rule'` and
+  therefore *cannot* see uncategorized rows — `ck_transactions_category_source` forces
+  their source null. Do not "simplify" triage by routing it through that endpoint.
+- Playwright runs `workers: 1`: every spec shares one seeded `data/app.db` and several
+  mutate it. Parallel specs interleave with the ones asserting the DOM against a
+  freshly-fetched API figure, which is a race, not a flake to retry away.
 - Archived assets stay in net-worth queries — excluding them rewrites history.
   Retire an asset by entering a closing `0` snapshot, *then* archiving.
 - `Transfer` and `Income` cannot be deleted, renamed, archived, or have

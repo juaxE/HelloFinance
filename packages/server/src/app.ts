@@ -11,6 +11,7 @@ import { registerImportRoutes } from './routes/imports';
 import { registerLabelingRuleRoutes } from './routes/labeling-rules';
 import { registerRecurringTemplateRoutes } from './routes/recurring-templates';
 import { registerTransactionRoutes } from './routes/transactions';
+import { registerTriageRoutes } from './routes/triage';
 
 /**
  * `now` is injectable so budget tests can pin the current month: the synthetic
@@ -50,6 +51,7 @@ export function buildApp(db: Db, options: AppOptions = {}): FastifyInstance {
   registerImportRoutes(app, db);
   registerLabelingRuleRoutes(app, db);
   registerTransactionRoutes(app, db);
+  registerTriageRoutes(app, db);
   registerRecurringTemplateRoutes(app, db, currentMonth);
   registerBudgetRoutes(app, db, currentMonth);
   registerDashboardRoutes(app, db, currentMonth);

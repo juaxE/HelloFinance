@@ -5,6 +5,12 @@ const BASE_URL = 'http://127.0.0.1:5173';
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: true,
+  // Every spec runs against the ONE seeded `data/app.db`, and several mutate it:
+  // triage categorizes rows, the dashboard spec PUTs envelopes, the review spec
+  // uploads. In parallel those interleave with the specs that assert the DOM
+  // against a freshly-fetched API figure, which is a race, not a flake to retry
+  // away. Four spec files run serially in well under a minute.
+  workers: 1,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   reporter: 'list',

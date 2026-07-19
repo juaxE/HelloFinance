@@ -30,6 +30,11 @@ import type {
   Transaction,
   TransactionPatch,
   TransactionPatchResult,
+  TriageApplyResult,
+  TriageCount,
+  TriageGroupApply,
+  TriageQueue,
+  TriageUndoResult,
   UncreatedBudgetMonth,
 } from '@finance/shared';
 
@@ -102,6 +107,24 @@ export const api = {
     request<TransactionPatchResult>(`/transactions/${id}`, {
       method: 'PATCH',
       body: JSON.stringify(patch),
+    }),
+
+  // --- Triage --------------------------------------------------------------
+
+  getTriageQueue: () => request<TriageQueue>('/transactions/uncategorized'),
+
+  getTriageCount: () => request<TriageCount>('/transactions/uncategorized/count'),
+
+  applyTriageGroup: (body: TriageGroupApply) =>
+    request<TriageApplyResult>('/transactions/triage/group', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  undoTriageApply: (undoToken: string) =>
+    request<TriageUndoResult>('/transactions/triage/undo', {
+      method: 'POST',
+      body: JSON.stringify({ undoToken }),
     }),
 
   listLabelingRules: () => request<LabelingRule[]>('/labeling-rules'),

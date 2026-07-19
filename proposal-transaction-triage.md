@@ -90,11 +90,28 @@ retroactive sweep filters `eq(transactions.categorySource, 'rule')`, and the
 check constraint at `schema.ts:178-180` makes `category_source` null for exactly
 the rows triage targets. It is structurally unable to match them.
 
-## Shared grouping
+## Shared grouping — dropped after reading the code
 
-`pipeline.ts` groups staged rows; triage groups committed ones. Extract one
-grouping function over `{ counterparty, amountCents }` and call it from both, so
-the two views cannot drift on grouping semantics while they coexist.
+The proposal originally called for extracting one grouping function used by both
+`pipeline.ts` and triage. Reading `getImportDetail` shows that is wrong:
+`pipeline.ts:306` groups on `staged_transactions.normalized_counterparty`, a
+**stored column** that `transactions` does not have, and everything around the
+bucketing (proposals, `remember_rule`, `before_opening`) is staging-specific
+with no triage analogue. What would actually be shared is ~8 lines of Map
+bucketing — a speculative abstraction, not drift protection.
+
+The real shared surface is `normalizeCounterparty`, a pure function both paths
+already call. That is what keeps them agreeing on what counts as the same
+counterparty, and it needed no change.
+
+## Known gap surfaced by the fixtures
+
+`stripTrailingProcessorToken` only strips a trailing `*`-segment when it
+contains a digit, so `PAYPAL *SPOTIFY*P1DXYSB` normalizes to `SPOTIFY` while
+`PAYPAL *SPOTIFY*PAYSCU` and `PAYPAL *SPOTIFY*PPBOGT` do not — the seeded
+backlog shows Spotify as one group of 10 plus two singletons. Not fixed here:
+loosening that rule risks eating real counterparty words, and the fix belongs
+with the deferred "edit the normalizer when grouping is wrong" work.
 
 ## Acceptance criteria
 

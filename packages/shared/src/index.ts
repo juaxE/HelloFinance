@@ -12,6 +12,7 @@ export * from './common';
 export * from './account';
 export * from './category';
 export * from './transaction';
+export * from './triage';
 export * from './labeling-rule';
 export * from './import';
 export * from './budget';
