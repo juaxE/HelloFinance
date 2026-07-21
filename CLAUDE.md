@@ -200,9 +200,13 @@ learned rules.
 - Playwright runs `workers: 1`: every spec shares one seeded `data/app.db` and several
   mutate it. Parallel specs interleave with the ones asserting the DOM against a
   freshly-fetched API figure, which is a race, not a flake to retry away.
-- The e2e resume spec reads the seeded pending overlap import and must never commit or
-  discard it — later specs assert figures that assume it stays pending. It finds the
-  import through `GET /api/imports`, never by hardcoded id.
+- The e2e resume spec must never commit or discard the seeded pending overlap import —
+  later specs assert figures that assume it stays pending. It *does* mutate it: proving
+  a resumed decision survives a reload requires writing one, so it leaves a
+  `chosen_category_id` on one staged group. That is safe only because nothing outside
+  that import reads its staged rows, and it stays safe only while the spec never
+  commits. It finds the import by filename in `GET /api/imports`, never by hardcoded
+  id — several specs upload that same fixture, so the row is the last (oldest) match.
 - A running `npm run dev` server **hijacks the e2e suite**: `reuseExistingServer`
   adopts whatever answers on :3001 without applying the config's `FINANCE_NOW`, and
   that process keeps an open handle to the `data/app.db` that `seed:test` unlinked —

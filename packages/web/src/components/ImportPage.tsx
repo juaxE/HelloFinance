@@ -56,7 +56,18 @@ export function ImportPage() {
     setLoading(true);
     setError(null);
     try {
-      setDetail(await api.getImport(importId));
+      const resumed = await api.getImport(importId);
+      // The listed row can be stale — another tab is exactly the situation
+      // resume exists for, and it may have committed or discarded this import
+      // since the list was fetched. Opening the review screen anyway would show
+      // an empty review whose Commit button silently reports the other tab's
+      // result as if it had just happened.
+      if (resumed.status !== 'pending_review') {
+        setError(`That import is ${resumed.status} — it is no longer in review.`);
+        await refreshPending();
+        return;
+      }
+      setDetail(resumed);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'failed to open import');
     } finally {
@@ -74,7 +85,11 @@ export function ImportPage() {
         onDone={() => {
           setDetail(null);
           setFile(null);
-          void refreshPending().catch(() => undefined);
+          // A failure here leaves the just-finished import on the list, whose
+          // Resume button then leads nowhere — say so rather than swallowing it.
+          void refreshPending().catch((e) =>
+            setError(e instanceof Error ? e.message : 'failed to refresh pending imports'),
+          );
         }}
       />
     );
@@ -110,6 +125,13 @@ export function ImportPage() {
                     {accounts.find((a) => a.id === imp.accountId)?.name ?? `#${imp.accountId}`}
                   </td>
                   <td>{formatCreatedAt(imp.createdAt)}</td>
+                  {/*
+                    `rowCount - duplicateCount` is the staged 'new' count exactly
+                    — but only while the import is pending, which is all this
+                    list shows: commit rewrites `duplicateCount` to include rows
+                    that went stale. Any future import-history view must read
+                    `insertedCount` instead of re-deriving this.
+                  */}
                   <td>
                     {imp.rowCount - imp.duplicateCount} new, {imp.duplicateCount} duplicates
                   </td>

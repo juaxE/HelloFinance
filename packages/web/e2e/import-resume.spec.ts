@@ -20,8 +20,12 @@ test('criterion 6: a pending import is listed and resumes with its staged decisi
 }) => {
   await page.goto('/');
 
-  const row = page.getByTestId('pending-import-row').filter({ hasText: PENDING_FILENAME });
-  await expect(row).toHaveCount(1);
+  // `review-screen.spec.ts` uploads the same file and leaves it pending too, so
+  // this must not assert a count: after a full suite run — or a re-run of this
+  // spec alone against an already-exercised database — there are several rows
+  // with this filename. The list is newest-first, so the seeded one is last.
+  const row = page.getByTestId('pending-import-row').filter({ hasText: PENDING_FILENAME }).last();
+  await expect(row).toBeVisible();
   await expect(row).toContainText('Main');
   await expect(row).toContainText('14 new, 28 duplicates');
 
@@ -42,7 +46,10 @@ test('criterion 6: a pending import is listed and resumes with its staged decisi
 
   await page.reload();
 
-  const rowAgain = page.getByTestId('pending-import-row').filter({ hasText: PENDING_FILENAME });
+  const rowAgain = page
+    .getByTestId('pending-import-row')
+    .filter({ hasText: PENDING_FILENAME })
+    .last();
   await rowAgain.getByRole('button', { name: 'Resume' }).click();
   await expect(page.getByRole('heading', { name: 'Review import' })).toBeVisible();
 
@@ -68,4 +75,28 @@ test('criterion 7: with no pending imports the import page is unchanged', async 
   await expect(page.getByLabel('Account')).toBeVisible();
   await expect(page.getByLabel('CSV file')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Analyze' })).toBeDisabled();
+});
+
+// The listed row is a snapshot. Another tab — the very situation resume exists
+// for — can commit or discard an import between the list load and the click,
+// and the review screen must not open on staging that no longer exists.
+test('resuming an import that is no longer pending reports it instead of opening the review', async ({
+  page,
+}) => {
+  await page.goto('/');
+  const row = page.getByTestId('pending-import-row').filter({ hasText: PENDING_FILENAME }).last();
+  await expect(row).toBeVisible();
+
+  // Answer the detail fetch as the other tab would have left it. Read-only:
+  // the seeded import is untouched on the server.
+  await page.route(/\/api\/imports\/\d+$/, async (route) => {
+    const detail = await route.fetch().then((r) => r.json());
+    await route.fulfill({ json: { ...detail, status: 'committed' } });
+  });
+
+  await row.getByRole('button', { name: 'Resume' }).click();
+
+  await expect(page.getByRole('alert')).toContainText('no longer in review');
+  await expect(page.getByRole('heading', { name: 'Review import' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Import a CSV export' })).toBeVisible();
 });

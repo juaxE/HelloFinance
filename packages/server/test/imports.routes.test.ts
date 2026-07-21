@@ -71,6 +71,19 @@ async function countTransactions(): Promise<number> {
   return (await fetch(`${base}/api/transactions`).then(json)).length;
 }
 
+/** Signed cents per payment month over every committed row — the money side. */
+async function monthlyCents(): Promise<Record<string, number>> {
+  const rows: Array<{ paymentDate: string; amountCents: number }> = await fetch(
+    `${base}/api/transactions`,
+  ).then(json);
+  const byMonth: Record<string, number> = {};
+  for (const r of rows) {
+    const month = r.paymentDate.slice(0, 7);
+    byMonth[month] = (byMonth[month] ?? 0) + r.amountCents;
+  }
+  return byMonth;
+}
+
 describe('POST /api/imports (upload + analyze)', () => {
   it('parses a multipart upload and returns counts + groups (AC 002-12 data)', async () => {
     const accountId = await createAccount();
@@ -263,11 +276,7 @@ describe('GET /api/imports (proposal 008)', () => {
     const accountId = await createAccount();
     const { body: first } = await uploadMainFixture(accountId);
     await commit(first.importId);
-    const { body: second } = await upload(
-      accountId,
-      expected.files.overlap.path,
-      'overlap.csv',
-    );
+    const { body: second } = await upload(accountId, expected.files.overlap.path, 'overlap.csv');
 
     const all = await fetch(`${base}/api/imports`).then(json);
     expect(all.map((i: { id: number }) => i.id)).toEqual([second.importId, first.importId]);
@@ -328,23 +337,34 @@ describe('commit-time dedup re-verification (proposal 008)', () => {
   it('criterion 3: partial overlap inserts exactly the rows that are still new', async () => {
     const accountId = await createAccount();
     const { body: main } = await uploadMainFixture(accountId);
-    const { body: overlap } = await upload(
-      accountId,
-      expected.files.overlap.path,
-      'overlap.csv',
-    );
+    const { body: overlap } = await upload(accountId, expected.files.overlap.path, 'overlap.csv');
     // Analyzed before main committed, so analyze-time dedup sees nothing.
     expect(overlap.counts.duplicates).toBe(0);
     expect(overlap.counts.new).toBe(expected.dedup.overlapRowCount);
 
     const { body: mainResult } = await commit(main.importId);
     expect(mainResult.inserted).toBe(expected.dedup.mainRowCount);
+    const mainOnlyMonths = await monthlyCents();
+    expect(Object.keys(mainOnlyMonths).sort()).toEqual([...expected.files.main.months].sort());
 
     const { res, body } = await commit(overlap.importId);
     expect(res.status).toBe(200);
     expect(body.inserted).toBe(expected.dedup.overlapNewRows);
     expect(body.duplicates).toBe(expected.dedup.overlapSharedWithMain);
     expect(await countTransactions()).toBe(expected.dedup.unionUniqueArchiveIds);
+
+    // The money side of "re-importing overlap never duplicates" (non-negotiable
+    // #4): every month the two files share must hold exactly the cents it held
+    // before the overlap commit — a count-only assertion would pass even if the
+    // 28 shared rows had been swapped for 28 other rows. The overlap file's 14
+    // genuinely new rows are all dated 2026-07, so it is the one new month.
+    const bothMonths = await monthlyCents();
+    for (const month of expected.files.main.months) {
+      expect([month, bothMonths[month]]).toEqual([month, mainOnlyMonths[month]]);
+    }
+    expect(Object.keys(bothMonths).sort()).toEqual(
+      [...expected.files.main.months, '2026-07'].sort(),
+    );
   });
 
   it('criterion 4: an import whose only unlabeled rows went stale commits without allowUncategorized', async () => {
