@@ -1,9 +1,15 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/client';
-import { accounts, categories, labelingRules, transactions } from '../src/db/schema';
+import {
+  accounts,
+  categories,
+  labelingRules,
+  stagedTransactions,
+  transactions,
+} from '../src/db/schema';
 import {
   ImportPipelineError,
   analyzeImport,
@@ -451,6 +457,52 @@ describe('extend-history recompute + guard (AC 002-11, 002-12)', () => {
     const after = db.select().from(accounts).where(eq(accounts.id, mainAccountId)).get()!;
     expect(after.openingBalanceDate).toBe(before.openingBalanceDate);
     expect(after.openingBalanceCents).toBe(before.openingBalanceCents);
+  });
+
+  it('criterion 8: re-analyzes every pending import on the account, not just its own', () => {
+    const b = expected.openingBalanceBoundary.extendHistory;
+    db.update(accounts)
+      .set({
+        openingBalanceDate: b.oldOpeningBalanceDate,
+        openingBalanceCents: b.oldOpeningBalanceCents,
+      })
+      .where(eq(accounts.id, mainAccountId))
+      .run();
+
+    // A sibling import staged under the OLD opening date: its early rows are
+    // frozen as before-opening and commit would silently drop them.
+    const sibling = analyzeImport(db, {
+      accountId: mainAccountId,
+      filename: 'sibling.csv',
+      bytes: loadFixture(b.path),
+    }).importId;
+    const stagedNew = (importId: number) =>
+      db
+        .select()
+        .from(stagedTransactions)
+        .where(
+          and(eq(stagedTransactions.importId, importId), eq(stagedTransactions.dupState, 'new')),
+        )
+        .all();
+    expect(stagedNew(sibling).filter((r) => r.beforeOpening).length).toBeGreaterThan(0);
+
+    const own = analyzeImport(db, {
+      accountId: mainAccountId,
+      filename: 'extend.csv',
+      bytes: loadFixture(b.path),
+    }).importId;
+    extendHistory(db, own);
+
+    // The date moved back to cover them, so no pending import may still hold a
+    // row on the wrong side of the boundary.
+    const account = db.select().from(accounts).where(eq(accounts.id, mainAccountId)).get()!;
+    expect(account.openingBalanceDate).toBe(b.newOpeningBalanceDate);
+    for (const importId of [own, sibling]) {
+      for (const row of stagedNew(importId)) {
+        expect(row.beforeOpening).toBe(row.paymentDate < account.openingBalanceDate!);
+      }
+    }
+    expect(stagedNew(sibling).some((r) => r.beforeOpening)).toBe(false);
   });
 });
 

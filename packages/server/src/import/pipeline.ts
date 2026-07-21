@@ -567,6 +567,55 @@ export function discardImport(db: Db, importId: number): void {
   });
 }
 
+// --- Re-analysis on an opening-date move ----------------------------------
+
+/** The transaction handle `db.transaction` hands its callback. */
+type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
+
+/**
+ * `before_opening` is frozen into `staged_transactions` at analyze time, and
+ * commit filters on that stored flag — so moving an account's opening date
+ * while an import sits in review would otherwise commit rows on the wrong side
+ * of the new boundary. Recompute the flag for every staged `new` row of the
+ * account's pending imports, the same way `extendHistory` does for the one
+ * import it touches. The status and dup-state filters are defensive rather than
+ * load-bearing — commit and discard both delete their staged rows, and only
+ * `new` rows are ever read back.
+ *
+ * Callers must already hold the write transaction that moves the date.
+ */
+export function reanalyzeStagedBeforeOpening(
+  tx: Tx,
+  accountId: number,
+  openingBalanceDate: string | null,
+): void {
+  const pending = tx
+    .select({
+      id: stagedTransactions.id,
+      paymentDate: stagedTransactions.paymentDate,
+      beforeOpening: stagedTransactions.beforeOpening,
+    })
+    .from(stagedTransactions)
+    .innerJoin(imports, eq(stagedTransactions.importId, imports.id))
+    .where(
+      and(
+        eq(imports.accountId, accountId),
+        eq(imports.status, 'pending_review'),
+        eq(stagedTransactions.dupState, 'new'),
+      ),
+    )
+    .all();
+
+  for (const row of pending) {
+    const beforeOpening = openingBalanceDate !== null && row.paymentDate < openingBalanceDate;
+    if (beforeOpening === row.beforeOpening) continue;
+    tx.update(stagedTransactions)
+      .set({ beforeOpening })
+      .where(eq(stagedTransactions.id, row.id))
+      .run();
+  }
+}
+
 // --- Extend history (decision 002-E) --------------------------------------
 
 export interface ExtendHistoryResult {
@@ -626,22 +675,10 @@ export function extendHistory(db: Db, importId: number): ExtendHistoryResult {
       .where(eq(accounts.id, account!.id))
       .run();
 
-    // Re-analyze in place: recompute before_opening for every staged 'new' row
-    // of this import against the new opening date.
-    const allNew = tx
-      .select()
-      .from(stagedTransactions)
-      .where(and(eq(stagedTransactions.importId, importId), eq(stagedTransactions.dupState, 'new')))
-      .all();
-    for (const row of allNew) {
-      const beforeOpening = row.paymentDate < earliestDate;
-      if (beforeOpening !== row.beforeOpening) {
-        tx.update(stagedTransactions)
-          .set({ beforeOpening })
-          .where(eq(stagedTransactions.id, row.id))
-          .run();
-      }
-    }
+    // Re-analyze in place against the new opening date — every pending import on
+    // the account, not just this one: a sibling import in review carries flags
+    // frozen against the old date and would drop now-in-window rows at commit.
+    reanalyzeStagedBeforeOpening(tx, account!.id, earliestDate);
   });
 
   return {
