@@ -21,6 +21,8 @@ test.describe.configure({ mode: 'serial' });
 
 /** Closed, budgeted while current by the seed — the historical-record case. */
 const CLOSED_BUDGETED_MONTH = '2026-04';
+/** Closed and never materialized by any seed or spec — the "never budgeted" case. */
+const NEVER_BUDGETED_MONTH = '2026-02';
 /** The current month: its suggestions come from the seeded 2026-05 envelopes. */
 const CURRENT_MONTH = '2026-06';
 const UNTOUCHED_PREVIOUS = '2026-07';
@@ -48,6 +50,12 @@ async function openBudgets(page: import('@playwright/test').Page, month: string)
   await expect(heading.or(uncreated).first()).toBeVisible();
 
   if (await uncreated.isVisible()) {
+    // A closed month offers no Materialize button, so clicking blindly would
+    // hang to a timeout far from the cause: say what actually happened.
+    await expect(
+      page.getByTestId('month-closed-uncreated'),
+      `${month} is closed and was never budgeted — it cannot be opened`,
+    ).toHaveCount(0);
     await page.getByRole('button', { name: 'Materialize month' }).click();
   }
   await expect(heading).toBeVisible();
@@ -235,13 +243,15 @@ test('criterion 7: a closed month is read-only while the current month is editab
   await page.screenshot({ path: 'test-results/budget-closed-month.png', fullPage: true });
 
   // A closed month that was never budgeted cannot be created any more — the
-  // offer to materialize it is gone too.
+  // offer to materialize it is gone too. NEVER_BUDGETED_MONTH is materialized
+  // by no spec and by no seed, so this holds against a database the local
+  // config reuses rather than reseeds.
   await page.goto('/');
   await page.getByRole('button', { name: 'Budgets' }).click();
   const picker = page.getByRole('textbox', { name: 'Month', exact: true });
-  await picker.fill('2025-08');
+  await picker.fill(NEVER_BUDGETED_MONTH);
   await picker.blur();
-  await expect(page.getByTestId('month-uncreated')).toContainText('closed month');
+  await expect(page.getByTestId('month-closed-uncreated')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Materialize month' })).toHaveCount(0);
 
   // ...while the current month offers all of it.

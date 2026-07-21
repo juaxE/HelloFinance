@@ -50,9 +50,11 @@ export const FIXTURE_EXPECTATIONS = JSON.parse(
 /**
  * Recurring templates matched to counterparties the fixtures actually charge,
  * across all three cadences, so the Budgets screen has a real bill plan to
- * reconcile (spec 003). Envelopes are deliberately NOT seeded: an envelope must
- * exist only because the owner set it, or the "did I budget this month?" signal
- * would be a lie (decision 003-K).
+ * reconcile (spec 003). No envelope is ever derived from a template: an envelope
+ * exists only because the owner set it, or the "did I budget this month?" signal
+ * would be a lie (decision 003-K). `seed-test.ts` plants envelopes in two closed
+ * months by hand, standing in for months the owner budgeted while they were
+ * current — that path is not shared with `test/helpers.ts`, see both sites.
  *
  * `[name, category, cents/occurrence, intervalMonths, day, startMonth, matchKey]`.
  */

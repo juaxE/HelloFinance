@@ -183,6 +183,36 @@ describe('proposal 007 — closed months reject every write (criterion 1)', () =
     // Nothing moved: the whole reconciliation is byte-equal, note included.
     expect(await getMonth(PAST_MONTH)).toEqual(before);
   });
+
+  it('criterion 1: the two routes that materialize as a side effect are refused before they do it', async () => {
+    // `PUT …/envelopes` and `POST …/lines` create the month on the way in, so
+    // the guard has to run first: checked after, a 409 would still leave a
+    // closed month materialized behind it. Asserted on a month that does NOT
+    // exist yet — against an already-materialized one the ordering is invisible.
+    const unplanned = '2026-03';
+
+    const envelopes = await app.inject({
+      method: 'PUT',
+      url: `/api/budgets/${unplanned}/envelopes`,
+      payload: { envelopes: [{ categoryId: categoryId('Groceries'), amountCents: 40000 }] },
+    });
+    expect(envelopes.statusCode).toBe(409);
+
+    const line = await app.inject({
+      method: 'POST',
+      url: `/api/budgets/${unplanned}/lines`,
+      payload: {
+        kind: 'adhoc',
+        name: 'Car service',
+        categoryId: categoryId('Transport'),
+        amountCents: 25000,
+        matchNormalizedCounterparty: 'AUTOKORJAAMO OY',
+      },
+    });
+    expect(line.statusCode).toBe(409);
+
+    expect(db.select().from(budgets).where(eq(budgets.month, unplanned)).get()).toBeUndefined();
+  });
 });
 
 describe('proposal 007 — reading a closed month (criteria 2, 3)', () => {
@@ -301,7 +331,11 @@ describe('proposal 007 — the lock stops at the current month (criteria 4, 6)',
   });
 
   it('criterion 6: on the 1st of a month the previous month is already locked — the boundary is strict', async () => {
-    const rollover = buildApp(db, { now: () => new Date('2026-06-01T00:00:01.000Z') });
+    // Local time, not UTC: `monthOf` reads the clock in local time (it is the
+    // user's calendar that decides which month it is), so a UTC instant one
+    // second past midnight is still the previous month west of Greenwich — the
+    // boundary this criterion is about would then be asserted upside down.
+    const rollover = buildApp(db, { now: () => new Date(2026, 5, 1, 0, 0, 1) });
     await rollover.ready();
     try {
       const may = await rollover.inject({
