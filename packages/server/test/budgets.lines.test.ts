@@ -18,8 +18,13 @@ import { createTestDb } from './helpers';
 let app: FastifyInstance;
 let db: Db;
 
-const NOW = new Date('2026-03-15T12:00:00.000Z');
-const CURRENT_MONTH = '2026-03';
+// Pinned to the first fixture month so every month written here is the current
+// one or a later one: past months are read-only (proposal 007), and these
+// criteria are about the line rules, not the lock. `MONTH` is the month under
+// test throughout, one month ahead of "now"; `CURRENT_MONTH` is where the
+// criterion-26 hint is exercised.
+const NOW = new Date('2025-07-15T12:00:00.000Z');
+const CURRENT_MONTH = '2025-07';
 const MONTH = '2025-08';
 
 beforeEach(async () => {
@@ -594,7 +599,7 @@ describe('spec 003 — line routes are scoped to the month that addresses them',
 describe('spec 003 — month creation on GET (decision 003-C)', () => {
   it('an absent non-current month that is only glanced at returns an uncreated marker and is not materialized', async () => {
     const res = await app.inject({ method: 'GET', url: '/api/budgets/2025-08' });
-    expect(res.json()).toEqual({ month: '2025-08', uncreated: true });
+    expect(res.json()).toEqual({ month: '2025-08', uncreated: true, closed: false });
     expect(db.select().from(budgets).all()).toHaveLength(0);
   });
 

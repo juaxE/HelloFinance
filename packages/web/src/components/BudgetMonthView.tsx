@@ -40,22 +40,33 @@ export function BudgetMonthView({
   const oneOffs = month.lines.filter((l) => l.kind === 'adhoc');
   const envelopes = month.lines.filter((l) => l.kind === 'envelope');
 
+  // A closed month is a historical record (proposal 007). The server 409s on
+  // every write to it; this just stops the screen offering dead buttons.
+  const closed = month.closed;
+
   return (
     <section>
       <header style={{ display: 'flex', alignItems: 'baseline', gap: '1rem' }}>
         <h2 style={{ margin: 0 }}>{month.month}</h2>
+        {closed && (
+          <span data-testid="month-closed" style={{ color: 'var(--muted)' }}>
+            Closed month — historical record
+          </span>
+        )}
         {/* Informational, not a scolding: it states a fact (decision 003-K). */}
         {!month.budgeted && (
           <span data-testid="not-budgeted" style={{ color: 'var(--muted)' }}>
             Not budgeted yet — no goals set for this month
           </span>
         )}
-        <button onClick={onEditGoals} style={{ marginLeft: 'auto' }}>
-          Edit goals
-        </button>
+        {!closed && (
+          <button onClick={onEditGoals} style={{ marginLeft: 'auto' }}>
+            Edit goals
+          </button>
+        )}
       </header>
 
-      <MonthNote note={month.note} onSave={onSaveNote} />
+      {closed ? <ClosedMonthNote note={month.note} /> : <MonthNote note={month.note} onSave={onSaveNote} />}
 
       <LineGroup
         title="Bills"
@@ -63,6 +74,7 @@ export function BudgetMonthView({
         lines={bills}
         categoryName={categoryName}
         onDeleteLine={onDeleteLine}
+        closed={closed}
         showDay
         emptyText="No recurring bills materialized into this month."
       />
@@ -72,15 +84,17 @@ export function BudgetMonthView({
         lines={oneOffs}
         categoryName={categoryName}
         onDeleteLine={onDeleteLine}
+        closed={closed}
         emptyText="No one-off lines this month."
       />
-      <AddOneOffForm categories={categories} onAdd={onAddOneOff} />
+      {!closed && <AddOneOffForm categories={categories} onAdd={onAddOneOff} />}
       <LineGroup
         title="Envelopes"
         testId="group-envelopes"
         lines={envelopes}
         categoryName={categoryName}
         onDeleteLine={onDeleteLine}
+        closed={closed}
         emptyText="No category goals set for this month."
       />
 
@@ -225,6 +239,17 @@ function MonthNote({
   );
 }
 
+/** The same note, in a closed month: shown as the record it is, not an input. */
+function ClosedMonthNote({ note }: { note: string | null }) {
+  if (note === null) return null;
+  return (
+    <p data-testid="month-note-readonly" style={{ margin: '0.5rem 0 1rem' }}>
+      <span style={{ color: 'var(--muted)', marginRight: '0.5rem' }}>Note</span>
+      {note}
+    </p>
+  );
+}
+
 /**
  * Add an ad-hoc line. A counterparty is **required** (decision 003-J): an
  * unnamed one-off would be a category-level goal, which is what an envelope
@@ -347,6 +372,7 @@ function LineGroup({
   lines,
   categoryName,
   onDeleteLine,
+  closed,
   showDay = false,
   emptyText,
 }: {
@@ -355,6 +381,7 @@ function LineGroup({
   lines: ReconciledLine[];
   categoryName: (id: number) => string;
   onDeleteLine: (id: number) => void;
+  closed: boolean;
   showDay?: boolean;
   emptyText: string;
 }) {
@@ -409,12 +436,14 @@ function LineGroup({
                   <VarianceBar planned={line.amountCents} actual={line.actualCents} />
                 </td>
                 <td>
-                  <button
-                    aria-label={`Delete line ${line.name}`}
-                    onClick={() => onDeleteLine(line.id)}
-                  >
-                    Delete
-                  </button>
+                  {!closed && (
+                    <button
+                      aria-label={`Delete line ${line.name}`}
+                      onClick={() => onDeleteLine(line.id)}
+                    >
+                      Delete
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}

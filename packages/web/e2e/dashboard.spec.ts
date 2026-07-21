@@ -20,10 +20,13 @@ test.describe.configure({ mode: 'serial' });
 const MONTH = '2026-06';
 
 /**
- * The seed deliberately ships no budgets (an envelope must exist only because
- * the owner set one, 003-K), so the budget-vs-actual card would otherwise render
+ * The seed ships envelopes only in the two closed months it plants as history
+ * (2026-04, 2026-05) — an envelope must exist only because the owner set one
+ * (003-K) — so the current month's budget-vs-actual card would otherwise render
  * its empty state and criterion 10's tie-out for that card would assert nothing.
- * Materializing here is idempotent, so every test that needs the card can call it.
+ * Materializing here is idempotent, so every test that needs the card can call
+ * it. MONTH is the pinned current month, which is what makes these writes legal
+ * at all (proposal 007).
  */
 async function ensureBudget(request: import('@playwright/test').APIRequestContext): Promise<void> {
   await request.post('http://127.0.0.1:3001/api/budgets', { data: { month: MONTH } });

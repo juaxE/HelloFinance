@@ -22,7 +22,10 @@ import { createTestDb, EXPECTED, loadFixture } from './helpers';
 let app: FastifyInstance;
 let db: Db;
 
-const NOW = new Date('2026-03-15T12:00:00.000Z');
+// Pinned to the first fixture month: every month this file opens is the current
+// one or a later one, so the past-month write lock (proposal 007) never stands
+// between a test and the month it reconciles.
+const NOW = new Date('2025-07-15T12:00:00.000Z');
 
 beforeEach(async () => {
   db = createTestDb();

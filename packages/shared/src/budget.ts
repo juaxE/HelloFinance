@@ -257,6 +257,16 @@ export type EnvelopeCandidate = z.infer<typeof zEnvelopeCandidate>;
 export const zBudgetMonth = z.object({
   month: zMonth,
   budgetId: z.number().int(),
+  /**
+   * `month < currentMonth` — the month has ended and its **plan** is frozen
+   * (proposal 007). Every write route 409s on it; the UI offers no write
+   * affordance. Actuals in a closed month still recompute live, so the numbers
+   * below keep moving when a transaction in it is relabelled.
+   *
+   * Server-derived on purpose: the browser's clock is not the clock the lock is
+   * enforced against (`FINANCE_NOW` pins the server's in tests).
+   */
+  closed: z.boolean(),
   note: z.string().nullable(),
   lines: z.array(zReconciledLine),
   categories: z.array(zCategoryDecomposition),
@@ -280,5 +290,10 @@ export type BudgetMonth = z.infer<typeof zBudgetMonth>;
 export const zUncreatedBudgetMonth = z.object({
   month: zMonth,
   uncreated: z.literal(true),
+  /**
+   * A **closed** uncreated month is the permanent answer "never budgeted" — it
+   * cannot be created any more, so the UI must not offer to.
+   */
+  closed: z.boolean(),
 });
 export type UncreatedBudgetMonth = z.infer<typeof zUncreatedBudgetMonth>;

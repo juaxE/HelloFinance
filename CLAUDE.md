@@ -215,6 +215,27 @@ learned rules.
   across non-ended templates and per month — no insert path may bypass that check.
 - Envelopes are never auto-created (not from templates, prefill, or previous months)
   — zero envelopes **is** the "not budgeted yet" signal.
+- Past months (`< currentMonth`) are fully read-only — no materialization, lines,
+  envelopes, or note edits (month note and line notes included); enforced by
+  `assertMonthWritable` in every budgets route AND by a throw inside
+  `materializeMonth`, so no insert path can bypass it. `?open=1` on an unmaterialized
+  past month returns the uncreated marker rather than creating it: the truth about a
+  month nobody budgeted is "never budgeted", and materializing it now would snapshot
+  today's templates as if they had been planned then. Actuals in a closed month still
+  recompute live — only the plan is frozen. There is no escape hatch; the only write
+  path into a month closes when the month does. The from-template route is not special
+  any more, it runs the same guard.
+- A consequence, not a second rule: the non-ended-template filter in `materializeMonth`
+  is now unreachable through the routes (every materializable month is `≥ currentMonth`,
+  hence past every ended template's `end_month`, hence not due). It stays as defense in
+  depth. A test needing a month that *was* materialized inside an ended template's
+  window must build it through a second `buildApp(db, { now })` pinned inside that month
+  — and back then the template was live, so its line is legitimately there.
+- Server tests that need budget history use that same two-app pattern; `seed-test.ts`
+  plants two budgeted closed months (2026-04, 2026-05) for the browser tests, and
+  `test/helpers.ts:seedFixtureApp` deliberately does **not** mirror them — the unit
+  baselines model "no budgets yet". That divergence is documented at both sites; do not
+  "fix" it by syncing the paths.
 - Templates and lines may not target `Transfer` or an income-source category — they
   could never reconcile and would sit permanently pending.
 - Editing `opening_balance_date` forward past committed transactions is rejected — it
@@ -241,8 +262,9 @@ learned rules.
   imports disabled — or grow auth first.
 - Every confirm-then-act UI flow needs a test for the **decline** path — the
   archive-on-cancel bug shipped because only the accept path was tested.
-- `FINANCE_NOW` gates budget materialization and the past-month write lock, not just
-  display — it must fail loudly on bad values and must never be set outside tests.
+- `FINANCE_NOW` is the clock the past-month lock and budget materialization are
+  enforced against, not just a display setting — it must fail loudly on bad values and
+  must never be set outside tests.
   **Real mode refuses to start with it set**, so "outside tests" is structural.
 - Real data never enters the repo, fixtures, tests, or agent context. The mechanism
   is `FINANCE_MODE` (`real` → `data/app.db`, `dev` → `data/dev.db`), which has **no

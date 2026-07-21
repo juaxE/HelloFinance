@@ -16,6 +16,9 @@
  *    (allowUncategorized) — a year of real-looking committed history.
  *  - Two labeling rules, so the Rules screen and "from rule" badges have
  *    something to show.
+ *  - Two historical budget months (2026-04, 2026-05) with envelopes, planned as
+ *    if they had been budgeted while current — closed months take no writes
+ *    (proposal 007), so this is the only way the browser tests can see one.
  *  - Recurring templates, and the assets + monthly snapshots the dashboard's
  *    net-worth trend reads (spec 004). Both live in `seed-data.ts` so tests can
  *    build the same state in memory.
@@ -30,7 +33,9 @@ import { fileURLToPath } from 'node:url';
 import { DEV_DATABASE_PATH } from '../config';
 import { createDb } from '../db/client';
 import { runMigrations } from '../db/migrate';
-import { accounts } from '../db/schema';
+import { eq } from 'drizzle-orm';
+import { accounts, budgetLines, categories } from '../db/schema';
+import { materializeMonth } from '../budgets/materialize';
 import { analyzeImport, commitImport } from '../import/pipeline';
 import { FIXTURE_EXPECTATIONS as expected, seedAssets, seedRule, seedTemplates } from './seed-data';
 import { assertSeedableDatabase, markSyntheticSeed } from '../db/marker';
@@ -47,6 +52,60 @@ function resetDatabaseFile(path: string): void {
 
 function loadFixture(relPath: string): Buffer {
   return readFileSync(resolve(FIXTURES_ROOT, relPath));
+}
+
+/**
+ * Two months the owner budgeted **while they were current**: 2026-04 and
+ * 2026-05, relative to the `FINANCE_NOW=2026-06-15` the e2e suite pins. Closed
+ * months can no longer be created or given envelopes through any endpoint
+ * (proposal 007), so history a browser test needs has to arrive with the seed —
+ * and `materializeMonth` is called with the month as its own current month,
+ * which is exactly what happened back then.
+ *
+ * Deliberately NOT mirrored into `test/helpers.ts:seedFixtureApp`, unlike the
+ * labeling rules above: the unit-test baselines model "no budgets yet" (003-K)
+ * and several criteria assert against a month with zero envelopes. This is a
+ * documented divergence between the two seed paths, not drift.
+ *
+ * 2026-04 is the reconciliation screenshot's month (it holds the uncategorized
+ * VIPPS payback); 2026-05 is the previous month whose envelopes the current
+ * month's budget-making screen suggests.
+ */
+function seedHistoricalBudgets(db: ReturnType<typeof createDb>): void {
+  const goalsByMonth: [string, [string, number][]][] = [
+    [
+      '2026-04',
+      [
+        ['Groceries', 40000],
+        ['Restaurants & Cafés', 15000],
+      ],
+    ],
+    // Transport, not Groceries: the dashboard spec PUTs a Groceries envelope on
+    // the current month, and a suggestion is only visibly a suggestion while
+    // the month it is suggested into has no envelope of its own.
+    ['2026-05', [['Transport', 12000]]],
+  ];
+
+  for (const [month, goals] of goalsByMonth) {
+    const { budget } = materializeMonth(db, month, month);
+    for (const [categoryName, amountCents] of goals) {
+      const category = db
+        .select()
+        .from(categories)
+        .where(eq(categories.name, categoryName))
+        .get();
+      if (!category) throw new Error(`category ${categoryName} not found`);
+      db.insert(budgetLines)
+        .values({
+          budgetId: budget.id,
+          kind: 'envelope',
+          name: category.name,
+          categoryId: category.id,
+          amountCents,
+        })
+        .run();
+    }
+  }
 }
 
 function main(): void {
@@ -114,6 +173,7 @@ function main(): void {
 
   seedTemplates(db);
   seedAssets(db);
+  seedHistoricalBudgets(db);
 
   const overlapBytes = loadFixture(expected.files.overlap!.path);
   const overlapImport = analyzeImport(db, {
@@ -128,7 +188,8 @@ function main(): void {
       `  Main account #${mainAccount.id}: ${mainCommit.inserted} committed (${mainCommit.uncategorized} uncategorized)`,
       `  Buffer account #${bufferAccount.id}: ${bufferCommit.inserted} committed (${bufferCommit.uncategorized} uncategorized)`,
       `  2 labeling rules seeded (K-MARKET -> Groceries, NETFLIX.COM -> Subscriptions)`,
-      `  5 recurring templates seeded (monthly/quarterly/yearly bills; no envelopes — those are the owner's to set)`,
+      `  5 recurring templates seeded (monthly/quarterly/yearly bills)`,
+      `  2 closed months budgeted (2026-04, 2026-05); every other month has no envelopes — those are the owner's to set`,
       `  ${expected.assets.seeded.length} assets seeded with monthly snapshots (each skipping one month, for carry-forward)`,
       `  Pending review import #${overlapImport.importId} on Main (overlap file: 28 duplicates, 14 new groups expected)`,
     ].join('\n'),

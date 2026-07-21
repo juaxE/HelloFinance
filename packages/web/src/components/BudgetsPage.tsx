@@ -68,6 +68,10 @@ export function BudgetsPage() {
   );
 
   useEffect(() => {
+    // Goal editing belongs to the month it was opened for: carrying it across a
+    // month change would drop the user into the editor for a month they only
+    // navigated to — and into a closed month's editor, which has nothing to save.
+    setEditingGoals(false);
     load(month).catch(() => undefined);
   }, [month, load]);
 
@@ -128,8 +132,20 @@ export function BudgetsPage() {
 
       {isUncreated(state) && (
         <div data-testid="month-uncreated">
-          <p>{month} has not been created yet.</p>
-          <button onClick={createMonth}>Materialize month</button>
+          {state.closed ? (
+            // A closed month that was never budgeted stays that way: creating it
+            // now would snapshot today's templates as if they had been planned
+            // then (proposal 007).
+            <p data-testid="month-closed-uncreated">
+              {month} is a closed month — it was never budgeted, and closed months
+              are a historical record.
+            </p>
+          ) : (
+            <>
+              <p>{month} has not been created yet.</p>
+              <button onClick={createMonth}>Materialize month</button>
+            </>
+          )}
         </div>
       )}
 

@@ -2,28 +2,33 @@ import { expect, test } from '@playwright/test';
 
 /**
  * Spec 003 criterion 27 — the two required screenshots, taken against the
- * seeded dataset (`npm run seed:test`): a year of committed history plus five
- * recurring templates, and deliberately **no** envelopes, since an envelope
- * must exist only because the owner set one (decision 003-K).
+ * seeded dataset (`npm run seed:test`): a year of committed history, five
+ * recurring templates, and envelopes in exactly two months, 2026-04 and
+ * 2026-05, seeded as months the owner budgeted while they were current.
+ * Every other month deliberately has **no** envelopes, since an envelope must
+ * exist only because the owner set one (decision 003-K).
  *
- * Every month used holds real fixture charges; 2026-04 additionally holds the
- * uncategorized +10,12 EUR VIPPS payback that criterion 11's "Needs review"
- * bucket is about.
+ * The server's clock is pinned to 2026-06-15 (`FINANCE_NOW`), so **2026-06 is
+ * the current month and everything before it is closed** (proposal 007): a
+ * closed month takes no writes, and every test that budgets does so in 2026-06
+ * or later. 2026-04 is the read-only case — it holds the uncategorized
+ * +10,12 EUR VIPPS payback that criterion 11's "Needs review" bucket is about.
  */
 
 // These tests share one seeded database, and envelopes are persistent state, so
-// each test owns a distinct month pair and the file runs serially. 2026-04 is
-// reserved for the reconciliation screenshot because it holds the uncategorized
-// VIPPS payback.
+// each test owns a distinct month and the file runs serially.
 test.describe.configure({ mode: 'serial' });
 
-const SUGGESTION_PREVIOUS = '2025-08';
-const SUGGESTION_MONTH = '2025-09';
-const UNTOUCHED_PREVIOUS = '2025-10';
-const UNTOUCHED_MONTH = '2025-11';
-const RECONCILED_MONTH = '2026-04';
-const ONE_OFF_MONTH = '2025-12';
-const TYPING_MONTH = '2026-01';
+/** Closed, budgeted while current by the seed — the historical-record case. */
+const CLOSED_BUDGETED_MONTH = '2026-04';
+/** Closed and never materialized by any seed or spec — the "never budgeted" case. */
+const NEVER_BUDGETED_MONTH = '2026-02';
+/** The current month: its suggestions come from the seeded 2026-05 envelopes. */
+const CURRENT_MONTH = '2026-06';
+const UNTOUCHED_PREVIOUS = '2026-07';
+const UNTOUCHED_MONTH = '2026-08';
+const TYPING_MONTH = '2026-09';
+const ONE_OFF_MONTH = '2026-10';
 
 /** The goal input itself — its aria-label is a prefix of the confirm button's. */
 function goalInput(page: import('@playwright/test').Page, category: string) {
@@ -45,6 +50,12 @@ async function openBudgets(page: import('@playwright/test').Page, month: string)
   await expect(heading.or(uncreated).first()).toBeVisible();
 
   if (await uncreated.isVisible()) {
+    // A closed month offers no Materialize button, so clicking blindly would
+    // hang to a timeout far from the cause: say what actually happened.
+    await expect(
+      page.getByTestId('month-closed-uncreated'),
+      `${month} is closed and was never budgeted — it cannot be opened`,
+    ).toHaveCount(0);
     await page.getByRole('button', { name: 'Materialize month' }).click();
   }
   await expect(heading).toBeVisible();
@@ -53,32 +64,23 @@ async function openBudgets(page: import('@playwright/test').Page, month: string)
 test('budget-making screen renders suggestions distinctly from confirmed amounts (criterion 27a)', async ({
   page,
 }) => {
-  // Give the PREVIOUS month envelopes, so the next month has something to suggest.
-  await openBudgets(page, SUGGESTION_PREVIOUS);
-  await page.getByRole('button', { name: 'Edit goals' }).click();
-  await goalInput(page, 'Groceries').fill('400.00');
-  await goalInput(page, 'Transport').fill('120.00');
-  await page.getByTestId('save-goals').click();
-  await expect(page.getByTestId('group-envelopes')).toBeVisible();
-
-  // Now open the month under test and edit its goals: Groceries and Transport
-  // arrive as suggestions; every other category is blank.
-  await openBudgets(page, SUGGESTION_MONTH);
+  // The current month: Transport arrives as a suggestion from the seeded
+  // 2026-05 envelope; every other category is blank.
+  await openBudgets(page, CURRENT_MONTH);
   await page.getByRole('button', { name: 'Edit goals' }).click();
 
-  const groceries = goalInput(page, 'Groceries');
-  await expect(groceries).toHaveAttribute('data-suggestion', 'true');
-  await expect(groceries).toHaveValue('400.00');
+  const transport = goalInput(page, 'Transport');
+  await expect(transport).toHaveAttribute('data-suggestion', 'true');
+  await expect(transport).toHaveValue('120.00');
 
   // Click-to-confirm promotes it without retyping...
   await page
-    .getByRole('button', { name: 'Confirm suggested goal for Groceries' })
+    .getByRole('button', { name: 'Confirm suggested goal for Transport' })
     .click();
-  await expect(groceries).toHaveAttribute('data-suggestion', 'false');
+  await expect(transport).toHaveAttribute('data-suggestion', 'false');
 
-  // ...while Transport stays an unconfirmed suggestion, and Health is a
-  // deliberately empty category — neither is styled as a problem.
-  await expect(goalInput(page, 'Transport')).toHaveAttribute('data-suggestion', 'true');
+  // ...while Health is a deliberately empty category — neither is styled as a
+  // problem.
   await expect(goalInput(page, 'Health')).toHaveValue('');
 
   // Criterion 22 (UI half): the per-category planned subtotal is envelope +
@@ -200,13 +202,10 @@ test('a month note and a template edit both persist', async ({ page }) => {
 test('month view shows reconciled numbers, the needs-review bucket and the tie-out (criterion 27b)', async ({
   page,
 }) => {
-  await openBudgets(page, RECONCILED_MONTH);
-  await page.getByRole('button', { name: 'Edit goals' }).click();
-  await goalInput(page, 'Groceries').fill('400.00');
-  await goalInput(page, 'Restaurants & Cafés').fill('150.00');
-  await page.getByTestId('save-goals').click();
+  // 2026-04: closed, and budgeted back when it was current — bills, envelopes
+  // and needs-review all reconciled, with no write affordance anywhere.
+  await openBudgets(page, CLOSED_BUDGETED_MONTH);
 
-  // Bills materialized from the seeded templates, reconciled against real charges.
   await expect(page.getByTestId('group-bills')).toBeVisible();
   await expect(page.getByTestId('group-envelopes')).toBeVisible();
 
@@ -224,4 +223,41 @@ test('month view shows reconciled numbers, the needs-review bucket and the tie-o
   await expect(page.getByTestId('tie-out')).toContainText('reconciles exactly');
 
   await page.screenshot({ path: 'test-results/budget-month-view.png', fullPage: true });
+});
+
+test('criterion 7: a closed month is read-only while the current month is editable', async ({
+  page,
+}) => {
+  await openBudgets(page, CLOSED_BUDGETED_MONTH);
+
+  // The indicator states the fact, and every write affordance is gone: no goal
+  // editing, no one-off form, no note input, no per-line delete.
+  await expect(page.getByTestId('month-closed')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Edit goals' })).toHaveCount(0);
+  await expect(page.getByTestId('add-one-off')).toHaveCount(0);
+  await expect(page.getByTestId('month-note')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /^Delete line / })).toHaveCount(0);
+  // Read-only does not mean empty: the month still reconciles in full.
+  await expect(page.getByTestId('budget-line').first()).toBeVisible();
+
+  await page.screenshot({ path: 'test-results/budget-closed-month.png', fullPage: true });
+
+  // A closed month that was never budgeted cannot be created any more — the
+  // offer to materialize it is gone too. NEVER_BUDGETED_MONTH is materialized
+  // by no spec and by no seed, so this holds against a database the local
+  // config reuses rather than reseeds.
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Budgets' }).click();
+  const picker = page.getByRole('textbox', { name: 'Month', exact: true });
+  await picker.fill(NEVER_BUDGETED_MONTH);
+  await picker.blur();
+  await expect(page.getByTestId('month-closed-uncreated')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Materialize month' })).toHaveCount(0);
+
+  // ...while the current month offers all of it.
+  await openBudgets(page, CURRENT_MONTH);
+  await expect(page.getByTestId('month-closed')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Edit goals' })).toBeVisible();
+  await expect(page.getByTestId('add-one-off')).toBeVisible();
+  await expect(page.getByTestId('month-note')).toBeVisible();
 });

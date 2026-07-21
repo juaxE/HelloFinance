@@ -417,19 +417,29 @@ describe('spec 004 — 003-M attribution divergence', () => {
     const magnitude = -spotify.amountCents;
     expect(magnitude).toBeGreaterThan(0);
 
-    await app.inject({ method: 'GET', url: `/api/budgets/${month}?open=1` });
-    const created = await app.inject({
-      method: 'POST',
-      url: `/api/budgets/${month}/lines`,
-      payload: {
-        kind: 'adhoc',
-        name: 'Spotify',
-        categoryId: subscriptions,
-        amountCents: magnitude,
-        matchNormalizedCounterparty: 'SPOTIFY',
-      },
-    });
-    expect(created.statusCode).toBe(201);
+    // The plan is written through an app whose clock sits inside `month`: past
+    // months are read-only (proposal 007), so a month planned "back then" is
+    // built back then. The relabel below still goes through the app under test
+    // — the actuals side of a closed month stays live.
+    const planned = buildApp(db, { now: () => new Date(`${month}-15T12:00:00.000Z`) });
+    await planned.ready();
+    try {
+      await planned.inject({ method: 'GET', url: `/api/budgets/${month}?open=1` });
+      const created = await planned.inject({
+        method: 'POST',
+        url: `/api/budgets/${month}/lines`,
+        payload: {
+          kind: 'adhoc',
+          name: 'Spotify',
+          categoryId: subscriptions,
+          amountCents: magnitude,
+          matchNormalizedCounterparty: 'SPOTIFY',
+        },
+      });
+      expect(created.statusCode).toBe(201);
+    } finally {
+      await planned.close();
+    }
 
     const budgetId = db.select().from(budgets).where(eq(budgets.month, month)).get()!.id;
     const neighbours = ['2026-03', '2026-04'];

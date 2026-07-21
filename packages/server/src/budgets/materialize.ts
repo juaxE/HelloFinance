@@ -35,6 +35,15 @@ export function materializeMonth(
     return { budget: existing, created: false };
   }
 
+  // Belt-and-braces behind the routes' own guard (proposal 007): a month closes
+  // when it ends, and creating one afterwards would snapshot the templates as
+  // they are TODAY into a month they were never planned in — fabricated
+  // history. Throwing here means no future insert path can reintroduce that by
+  // forgetting the route check.
+  if (month < currentMonth) {
+    throw new Error(`cannot materialize ${month}: it is closed (current month is ${currentMonth})`);
+  }
+
   // Decision 003-N enforces key uniqueness only over **non-ended** templates, so
   // that replacing a provider can reuse the counterparty. Materialization must
   // read templates over that same set or the two rules contradict each other: an
