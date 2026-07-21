@@ -218,7 +218,15 @@ learned rules.
 - Templates and lines may not target `Transfer` or an income-source category — they
   could never reconcile and would sit permanently pending.
 - Editing `opening_balance_date` forward past committed transactions is rejected — it
-  silently drops rows from the balance window.
+  silently drops rows from the balance window (enforced in `PATCH /api/accounts/:id`,
+  409).
+- `staged_transactions.before_opening` is frozen at **analyze** time and commit filters
+  on the stored flag, so **any** path that moves `opening_balance_date` must re-analyze
+  the staged rows of that account's pending imports in the same transaction — otherwise
+  a file analyzed under the old date commits rows on the wrong side of the new one, and
+  the forward-edit guard above (which sees only committed rows) never fires. Both movers
+  do this: `extendHistory` for its own import, `PATCH /api/accounts/:id` via
+  `reanalyzeStagedBeforeOpening` for every pending import on the account.
 - The extend-history assist is offered only when the file bridges the gap
   (`max(payment_date) ≥ old opening date`) — a partial file corrupts the opening balance.
 - Seeded labeling rules must be inserted **before** `analyzeImport` (proposals are
