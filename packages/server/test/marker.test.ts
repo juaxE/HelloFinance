@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createDb } from '../src/db/client';
 import { runMigrations } from '../src/db/migrate';
-import { assertSeedableDatabase, markSyntheticSeed } from '../src/scripts/seed-guard';
+import { assertSeedableDatabase, markSyntheticSeed } from '../src/db/marker';
 
 /**
  * Audit item B2: `seed:test` deletes whatever sits at DATABASE_PATH, which is
@@ -16,7 +16,7 @@ describe('seed guard (audit B2)', () => {
   const dirs: string[] = [];
 
   function tempDbPath(): string {
-    const dir = mkdtempSync(join(tmpdir(), 'seed-guard-'));
+    const dir = mkdtempSync(join(tmpdir(), 'marker-'));
     dirs.push(dir);
     return join(dir, 'app.db');
   }
@@ -33,7 +33,7 @@ describe('seed guard (audit B2)', () => {
 
   it('refuses an existing database without the synthetic marker (the real-DB shape)', () => {
     const path = tempDbPath();
-    const db = createDb(path); // what the dev server's getDb() produces
+    const db = createDb(path); // an unmarked DB, i.e. the real one's shape
     runMigrations(db);
     db.$client.close();
 

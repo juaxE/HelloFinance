@@ -16,6 +16,7 @@ import type {
   CommitResult,
   ExtendHistoryResult,
   GroupPatch,
+  Health,
   ImportDetail,
   IncomePoint,
   LabelingRule,
@@ -37,6 +38,7 @@ import type {
   TriageUndoResult,
   UncreatedBudgetMonth,
 } from '@finance/shared';
+import { zHealth } from '@finance/shared';
 
 /** Thin fetch wrapper over the local API (loopback-only, no auth). */
 class ApiError extends Error {}
@@ -57,6 +59,21 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  // `/health` sits outside the `/api` prefix (it is the server's own liveness
+  // endpoint and what Playwright waits on), so it bypasses `request`.
+  getHealth: async (): Promise<Health> => {
+    // Timeout, not an open-ended wait: a server that accepts the connection and
+    // never answers would otherwise leave the shell in `loading` forever, which
+    // renders no banner at all. Failing to `unknown` is the safe direction.
+    const res = await fetch('/health', { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) throw new ApiError(`${res.status} ${res.statusText}`);
+    // Parsed, not cast — this is the one response whose shape decides whether a
+    // warning renders. A 200 with an unexpected body (another server on :3001,
+    // a proxy returning `{}`) must land on `unknown`, not silently on neither
+    // banner.
+    return zHealth.parse(await res.json());
+  },
+
   listAccounts: () => request<Account[]>('/accounts'),
   listCategories: () => request<Category[]>('/categories'),
 
