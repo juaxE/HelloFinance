@@ -72,6 +72,24 @@ export const zBeforeOpeningSummary = z.object({
 });
 export type BeforeOpeningSummary = z.infer<typeof zBeforeOpeningSummary>;
 
+/**
+ * One row of `GET /api/imports` — the list/resume view. Deliberately flat: no
+ * staged rows, so listing stays cheap regardless of how big an import was.
+ */
+export const zImportSummary = z.object({
+  id: z.number().int(),
+  filename: z.string(),
+  accountId: z.number().int(),
+  bank: z.literal('s-pankki'),
+  status: zImportStatus,
+  encoding: zDetectedEncoding,
+  rowCount: z.number().int(),
+  insertedCount: z.number().int(),
+  duplicateCount: z.number().int(),
+  createdAt: z.number().int(),
+});
+export type ImportSummary = z.infer<typeof zImportSummary>;
+
 /** Response for both `POST /api/imports` and `GET /api/imports/:id`. */
 export const zImportDetail = z.object({
   importId: z.number().int(),
@@ -113,6 +131,10 @@ export const zCommitResult = z.object({
   inserted: z.number().int(),
   duplicates: z.number().int(),
   uncategorized: z.number().int(),
+  // True when the import was already committed and this call only recomputed
+  // its counts. Without it a second tab reads the first tab's commit as its own
+  // fresh success — the numbers are identical either way.
+  alreadyCommitted: z.boolean(),
 });
 export type CommitResult = z.infer<typeof zCommitResult>;
 

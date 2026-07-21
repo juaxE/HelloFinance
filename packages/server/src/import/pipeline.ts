@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull } from 'drizzle-orm';
 import type { Db } from '../db/client';
 import {
   accounts,
@@ -24,6 +24,70 @@ export class ImportPipelineError extends Error {
 
 type StagedRow = typeof stagedTransactions.$inferSelect;
 type ImportRow = typeof imports.$inferSelect;
+
+/** The transaction handle `db.transaction` hands its callback. */
+type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
+
+// --- Dedup lookup (shared by analyze and commit) -------------------------
+
+/** Everything the dedup lookup needs from a parsed or staged row. */
+interface DedupKeys {
+  archiveId: string | null;
+  contentHash: string;
+}
+
+/**
+ * Committed rows already holding any of these dedup keys, mapped to the account
+ * that holds them: archive_id (S-Pankki, always present) or, for a future bank
+ * without one, content_hash among the null-archive_id rows (CLAUDE.md
+ * non-negotiable #4 fallback).
+ *
+ * Analyze and commit both go through this — commit re-verifies what analyze
+ * decided, and the two must not drift into different notions of "duplicate".
+ */
+function findExistingDedupMatches(
+  db: Db | Tx,
+  rows: DedupKeys[],
+): { byArchiveId: Map<string, number>; byContentHash: Map<string, number> } {
+  const byArchiveId = new Map<string, number>();
+  const byContentHash = new Map<string, number>();
+
+  const archiveIds = [...new Set(rows.map((r) => r.archiveId).filter((v) => v !== null))];
+  if (archiveIds.length > 0) {
+    for (const t of db
+      .select({ archiveId: transactions.archiveId, accountId: transactions.accountId })
+      .from(transactions)
+      .where(inArray(transactions.archiveId, archiveIds))
+      .all()) {
+      byArchiveId.set(t.archiveId!, t.accountId);
+    }
+  }
+
+  const contentHashes = [
+    ...new Set(rows.filter((r) => r.archiveId === null).map((r) => r.contentHash)),
+  ];
+  if (contentHashes.length > 0) {
+    for (const t of db
+      .select({ contentHash: transactions.contentHash, accountId: transactions.accountId })
+      .from(transactions)
+      .where(and(isNull(transactions.archiveId), inArray(transactions.contentHash, contentHashes)))
+      .all()) {
+      byContentHash.set(t.contentHash, t.accountId);
+    }
+  }
+
+  return { byArchiveId, byContentHash };
+}
+
+/** The account already holding this row, or undefined if it is genuinely new. */
+function existingAccountIdFor(
+  row: DedupKeys,
+  matches: ReturnType<typeof findExistingDedupMatches>,
+): number | undefined {
+  return row.archiveId !== null
+    ? matches.byArchiveId.get(row.archiveId)
+    : matches.byContentHash.get(row.contentHash);
+}
 
 // --- Analyze -----------------------------------------------------------
 
@@ -59,67 +123,33 @@ export function analyzeImport(db: Db, params: AnalyzeParams): { importId: number
   const ruleRows = db.select().from(labelingRules).all();
   const ruleByNormalized = new Map(ruleRows.map((r) => [r.normalizedCounterparty, r.categoryId]));
 
-  // Existing dedup keys: archive_id (S-Pankki, always present) or, for a
-  // future bank without one, content_hash of an existing null-archive_id row
-  // (CLAUDE.md non-negotiable #4 fallback).
-  const parsedArchiveIds = [...new Set(rows.map((r) => r.archiveId).filter((v) => v !== null))];
-  const existingByArchiveId = new Map<string, number>();
-  if (parsedArchiveIds.length > 0) {
-    for (const t of db
-      .select({ archiveId: transactions.archiveId, accountId: transactions.accountId })
-      .from(transactions)
-      .where(inArray(transactions.archiveId, parsedArchiveIds))
-      .all()) {
-      existingByArchiveId.set(t.archiveId!, t.accountId);
-    }
-  }
-  const existingByContentHash = new Map<string, number>();
-  const nullArchiveContentHashes = rows
-    .filter((r) => r.archiveId === null)
-    .map((r) =>
-      computeContentHash({
-        accountId: params.accountId,
-        paymentDate: r.paymentDate,
-        amountCents: r.amountCents,
-        counterparty: r.counterparty,
-        reference: r.reference,
-        message: r.message,
-      }),
-    );
-  if (nullArchiveContentHashes.length > 0) {
-    for (const t of db
-      .select({ contentHash: transactions.contentHash, accountId: transactions.accountId })
-      .from(transactions)
-      .where(
-        and(
-          isNull(transactions.archiveId),
-          inArray(transactions.contentHash, [...new Set(nullArchiveContentHashes)]),
-        ),
-      )
-      .all()) {
-      existingByContentHash.set(t.contentHash, t.accountId);
-    }
-  }
-
-  const seenInBatch = new Set<string>();
-  let duplicateCount = 0;
-
-  const values = rows.map((row) => {
-    const normalizedCounterparty = normalizeCounterparty(row.counterparty);
-    const contentHash = computeContentHash({
+  const parsed = rows.map((row) => ({
+    row,
+    normalizedCounterparty: normalizeCounterparty(row.counterparty),
+    contentHash: computeContentHash({
       accountId: params.accountId,
       paymentDate: row.paymentDate,
       amountCents: row.amountCents,
       counterparty: row.counterparty,
       reference: row.reference,
       message: row.message,
-    });
+    }),
+  }));
 
+  const existing = findExistingDedupMatches(
+    db,
+    parsed.map((p) => ({ archiveId: p.row.archiveId, contentHash: p.contentHash })),
+  );
+
+  const seenInBatch = new Set<string>();
+  let duplicateCount = 0;
+
+  const values = parsed.map(({ row, normalizedCounterparty, contentHash }) => {
     const dedupKey = row.archiveId !== null ? `arc:${row.archiveId}` : `hash:${contentHash}`;
-    const existingAccountId =
-      row.archiveId !== null
-        ? existingByArchiveId.get(row.archiveId)
-        : existingByContentHash.get(contentHash);
+    const existingAccountId = existingAccountIdFor(
+      { archiveId: row.archiveId, contentHash },
+      existing,
+    );
 
     let dupState: StagedRow['dupState'];
     let duplicateAccountId: number | null = null;
@@ -284,6 +314,19 @@ function computeBeforeOpening(
   };
 }
 
+/**
+ * Every import, newest first, optionally narrowed to one status. Drives the
+ * pending-review resume list: an interrupted review is otherwise unreachable,
+ * since the chosen categories live in `staged_transactions` with nothing
+ * pointing at them.
+ */
+export function listImports(db: Db, status?: ImportRow['status']): ImportRow[] {
+  const query = db.select().from(imports).$dynamic();
+  return (status ? query.where(eq(imports.status, status)) : query)
+    .orderBy(desc(imports.createdAt), desc(imports.id))
+    .all();
+}
+
 export function getImportDetail(db: Db, importId: number): ImportDetail {
   const [importRow] = db.select().from(imports).where(eq(imports.id, importId)).all();
   if (!importRow) {
@@ -425,6 +468,8 @@ export interface CommitResult {
   inserted: number;
   duplicates: number;
   uncategorized: number;
+  /** The import was already committed; nothing was inserted by this call. */
+  alreadyCommitted: boolean;
 }
 
 /** Spec 002 "Commit". Idempotent: re-running on an already-committed import is a no-op. */
@@ -451,15 +496,6 @@ export function commitImport(
     .all();
 
   const eligible = staged.filter((r) => !r.beforeOpening);
-  const resolved = eligible.map((row) => resolveFinalCategory(row));
-  const unlabeledCount = resolved.filter((r) => r.categoryId === null).length;
-
-  if (unlabeledCount > 0 && !opts.allowUncategorized) {
-    throw new ImportPipelineError(
-      'some rows are still uncategorized; pass allowUncategorized: true to commit them as Uncategorized',
-      400,
-    );
-  }
 
   // Remember-rule upsert covers every group marked remember_rule=true, even if
   // some of its rows are before-opening-excluded (the rule is still learned).
@@ -476,9 +512,30 @@ export function commitImport(
     }
   }
 
-  db.transaction((tx) => {
-    for (let i = 0; i < eligible.length; i++) {
-      const row = eligible[i]!;
+  return db.transaction((tx) => {
+    // Re-verify dedup against the committed table, here, immediately before
+    // inserting: `dup_state` is a snapshot of the world at analyze time, and
+    // staging can outlive it (a second analyze of the same file, an
+    // interrupted review resumed after another import landed). Committing
+    // stale staging IS a re-import, so rows that became duplicates are
+    // skipped and counted — never an error, never a constraint violation.
+    const existing = findExistingDedupMatches(tx, eligible);
+    const insertable = eligible.filter((r) => existingAccountIdFor(r, existing) === undefined);
+    const staleCount = eligible.length - insertable.length;
+
+    // Counted after re-verification: a stale uncategorized row must not force
+    // the flag for rows that will never be inserted.
+    const resolved = insertable.map((row) => resolveFinalCategory(row));
+    const unlabeledCount = resolved.filter((r) => r.categoryId === null).length;
+    if (unlabeledCount > 0 && !opts.allowUncategorized) {
+      throw new ImportPipelineError(
+        'some rows are still uncategorized; pass allowUncategorized: true to commit them as Uncategorized',
+        400,
+      );
+    }
+
+    for (let i = 0; i < insertable.length; i++) {
+      const row = insertable[i]!;
       const final = resolved[i]!;
       tx.insert(transactions)
         .values({
@@ -517,18 +574,20 @@ export function commitImport(
         .run();
     }
 
+    const duplicates = importRow.duplicateCount + staleCount;
     tx.update(imports)
-      .set({ insertedCount: eligible.length, status: 'committed' })
+      .set({ insertedCount: insertable.length, duplicateCount: duplicates, status: 'committed' })
       .where(eq(imports.id, importId))
       .run();
     tx.delete(stagedTransactions).where(eq(stagedTransactions.importId, importId)).run();
-  });
 
-  return {
-    inserted: eligible.length,
-    duplicates: importRow.duplicateCount,
-    uncategorized: unlabeledCount,
-  };
+    return {
+      inserted: insertable.length,
+      duplicates,
+      uncategorized: unlabeledCount,
+      alreadyCommitted: false,
+    };
+  });
 }
 
 function resolveFinalCategory(row: StagedRow): {
@@ -554,6 +613,7 @@ function computeCommittedCounts(db: Db, importRow: ImportRow): CommitResult {
     inserted: committed.length,
     duplicates: importRow.duplicateCount,
     uncategorized: committed.filter((t) => t.categoryId === null).length,
+    alreadyCommitted: true,
   };
 }
 
@@ -568,9 +628,6 @@ export function discardImport(db: Db, importId: number): void {
 }
 
 // --- Re-analysis on an opening-date move ----------------------------------
-
-/** The transaction handle `db.transaction` hands its callback. */
-type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
 
 /**
  * `before_opening` is frozen into `staged_transactions` at analyze time, and

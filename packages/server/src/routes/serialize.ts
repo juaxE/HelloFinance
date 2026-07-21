@@ -2,6 +2,7 @@ import type {
   Account,
   BudgetLine,
   Category,
+  ImportSummary,
   LabelingRule,
   RecurringTemplate,
   Transaction,
@@ -10,6 +11,7 @@ import type {
   accounts,
   budgetLines,
   categories,
+  imports,
   labelingRules,
   recurringTemplates,
   transactions,
@@ -18,6 +20,7 @@ import type {
 type AccountRow = typeof accounts.$inferSelect;
 type CategoryRow = typeof categories.$inferSelect;
 type TransactionRow = typeof transactions.$inferSelect;
+type ImportRow = typeof imports.$inferSelect;
 type LabelingRuleRow = typeof labelingRules.$inferSelect;
 type RecurringTemplateRow = typeof recurringTemplates.$inferSelect;
 type BudgetLineRow = typeof budgetLines.$inferSelect;
@@ -69,6 +72,21 @@ export function serializeTransaction(row: TransactionRow): Transaction {
     importId: row.importId,
     createdAt: row.createdAt.getTime(),
     updatedAt: row.updatedAt.getTime(),
+  };
+}
+
+export function serializeImport(row: ImportRow): ImportSummary {
+  return {
+    id: row.id,
+    filename: row.filename,
+    accountId: row.accountId,
+    bank: row.bank,
+    status: row.status,
+    encoding: row.encodingDetected,
+    rowCount: row.rowCount,
+    insertedCount: row.insertedCount,
+    duplicateCount: row.duplicateCount,
+    createdAt: row.createdAt.getTime(),
   };
 }
 

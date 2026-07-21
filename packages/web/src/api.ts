@@ -18,6 +18,8 @@ import type {
   GroupPatch,
   Health,
   ImportDetail,
+  ImportStatus,
+  ImportSummary,
   IncomePoint,
   LabelingRule,
   LabelingRulePatch,
@@ -88,6 +90,9 @@ export const api = {
     }
     return (await res.json()) as ImportDetail;
   },
+
+  listImports: (status?: ImportStatus) =>
+    request<ImportSummary[]>(`/imports${status ? `?status=${status}` : ''}`),
 
   getImport: (importId: number) => request<ImportDetail>(`/imports/${importId}`),
 

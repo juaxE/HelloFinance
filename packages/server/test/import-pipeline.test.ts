@@ -114,6 +114,57 @@ describe('dedup (AC 002-2, 002-3)', () => {
     const totalCommitted = db.select().from(transactions).all().length;
     expect(totalCommitted).toBe(expected.dedup.unionUniqueArchiveIds);
   });
+
+  // Every fixture is S-Pankki, so `archive_id` is always present and the
+  // content_hash fallback (non-negotiable #4) is otherwise never exercised on
+  // the commit side — which is exactly the half that a future bank adapter will
+  // land on, and the half where analyze and commit could drift apart unnoticed.
+  it('commit re-verification falls back to content_hash for rows without an archive_id', () => {
+    const bytes = loadFixture(expected.files.main.path);
+    const { importId } = analyzeImport(db, {
+      accountId: mainAccountId,
+      filename: 'main.csv',
+      bytes,
+    });
+
+    // Turn one staged row into a no-archive-id row, as a bank without a unique
+    // id would produce, and plant its twin in the committed table.
+    const staged = db
+      .select()
+      .from(stagedTransactions)
+      .where(eq(stagedTransactions.importId, importId))
+      .all();
+    const target = staged.find((r) => r.dupState === 'new')!;
+    db.update(stagedTransactions)
+      .set({ archiveId: null })
+      .where(eq(stagedTransactions.id, target.id))
+      .run();
+    db.insert(transactions)
+      .values({
+        accountId: mainAccountId,
+        paymentDate: target.paymentDate,
+        bookingDate: target.bookingDate,
+        amountCents: target.amountCents,
+        type: target.type,
+        counterparty: target.counterparty,
+        archiveId: null,
+        contentHash: target.contentHash,
+      })
+      .run();
+
+    const result = commitImport(db, importId, { allowUncategorized: true });
+    expect(result.inserted).toBe(expected.dedup.mainRowCount - 1);
+    expect(result.duplicates).toBe(1);
+
+    // The planted row is still alone: matched on content_hash, not re-inserted.
+    const twins = db
+      .select()
+      .from(transactions)
+      .all()
+      .filter((t) => t.contentHash === target.contentHash);
+    expect(twins.length).toBe(1);
+    expect(twins[0]!.importId).toBe(null);
+  });
 });
 
 describe('encoding (AC 002-4)', () => {
@@ -547,7 +598,8 @@ describe('commit idempotency', () => {
     });
     const first = commitImport(db, importId, { allowUncategorized: true });
     const second = commitImport(db, importId, { allowUncategorized: true });
-    expect(second).toEqual(first);
+    expect(second).toEqual({ ...first, alreadyCommitted: true });
+    expect(first.alreadyCommitted).toBe(false);
     expect(db.select().from(transactions).all()).toHaveLength(first.inserted);
   });
 
