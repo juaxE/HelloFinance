@@ -41,19 +41,27 @@ export function registerBudgetRoutes(app: FastifyInstance, db: Db, currentMonth:
       return reply.code(400).send({ error: 'expected YYYY-MM' });
     }
     const explicitlyOpened = (req.query as { open?: string }).open === '1';
+    const closed = isClosed(month, currentMonth());
 
     let budget = db.select().from(budgets).where(eq(budgets.month, month)).get();
     if (!budget) {
-      if (month !== currentMonth() && !explicitlyOpened) {
-        return { month, uncreated: true as const };
+      // A closed month is never materialized, not even on an explicit open
+      // (proposal 007). Glancing at un-budgeted history is legitimate, and the
+      // truth about it is "never budgeted" — creating it now would snapshot
+      // today's templates into a month they were never planned in.
+      if (closed || (month !== currentMonth() && !explicitlyOpened)) {
+        return { month, uncreated: true as const, closed };
       }
       budget = materializeMonth(db, month, currentMonth()).budget;
     }
 
+    // Reading a closed month is unrestricted, and its actuals still recompute
+    // live from transactions — only the plan is frozen.
     const reconciliation = reconcileMonth(db, budget.id, month);
     return {
       month: budget.month,
       budgetId: budget.id,
+      closed,
       note: budget.note,
       lines: reconciliation.lines.map((line) => ({
         ...serializeBudgetLine(line),
@@ -76,6 +84,9 @@ export function registerBudgetRoutes(app: FastifyInstance, db: Db, currentMonth:
     if (!parsed.success) {
       return reply.code(400).send({ error: 'validation', details: parsed.error.flatten() });
     }
+    const closedFailure = assertMonthWritable(parsed.data.month, currentMonth());
+    if (closedFailure) return reply.code(closedFailure.status).send(closedFailure.body);
+
     const { budget, created } = materializeMonth(db, parsed.data.month, currentMonth());
     const lines = await db.select().from(budgetLines).where(eq(budgetLines.budgetId, budget.id));
     // Re-materializing is a no-op rather than an error: the caller asked for the
@@ -94,6 +105,11 @@ export function registerBudgetRoutes(app: FastifyInstance, db: Db, currentMonth:
     if (!parsed.success) {
       return reply.code(400).send({ error: 'validation', details: parsed.error.flatten() });
     }
+    // The note is part of the month's record too (owner decision, proposal 007):
+    // the lock covers everything, not only the money.
+    const closedFailure = assertMonthWritable(month, currentMonth());
+    if (closedFailure) return reply.code(closedFailure.status).send(closedFailure.body);
+
     const existing = db.select().from(budgets).where(eq(budgets.month, month)).get();
     if (!existing) {
       return reply.code(404).send({ error: 'budget month not materialized' });
@@ -122,6 +138,11 @@ export function registerBudgetRoutes(app: FastifyInstance, db: Db, currentMonth:
     if (!parsed.success) {
       return reply.code(400).send({ error: 'validation', details: parsed.error.flatten() });
     }
+    // Checked BEFORE materializing: this route creates the month as a side
+    // effect, so a late check would leave a closed month materialized behind a
+    // 409.
+    const closedFailure = assertMonthWritable(month, currentMonth());
+    if (closedFailure) return reply.code(closedFailure.status).send(closedFailure.body);
 
     const { budget } = materializeMonth(db, month, currentMonth());
     const categoryRows = new Map(
@@ -212,6 +233,8 @@ export function registerBudgetRoutes(app: FastifyInstance, db: Db, currentMonth:
       });
     }
     const body = parsed.data;
+    const closedFailure = assertMonthWritable(month, currentMonth());
+    if (closedFailure) return reply.code(closedFailure.status).send(closedFailure.body);
 
     const { budget } = materializeMonth(db, month, currentMonth());
     const failure = validateLine(db, {
@@ -263,6 +286,10 @@ export function registerBudgetRoutes(app: FastifyInstance, db: Db, currentMonth:
       return reply.code(400).send({ error: 'validation', details: parsed.error.flatten() });
     }
     const patch = parsed.data;
+    // Every field, `note` included: a closed month's plan is a record of what
+    // was planned then, annotations and all.
+    const closedFailure = assertMonthWritable(month, currentMonth());
+    if (closedFailure) return reply.code(closedFailure.status).send(closedFailure.body);
 
     const existing = findLineInMonth(db, month, id);
     if (!existing) {
@@ -333,6 +360,9 @@ export function registerBudgetRoutes(app: FastifyInstance, db: Db, currentMonth:
     if (!Number.isInteger(id)) {
       return reply.code(400).send({ error: 'invalid id' });
     }
+    const closedFailure = assertMonthWritable(month, currentMonth());
+    if (closedFailure) return reply.code(closedFailure.status).send(closedFailure.body);
+
     const existing = findLineInMonth(db, month, id);
     if (!existing) {
       return reply.code(404).send({ error: 'budget line not found' });
@@ -358,6 +388,12 @@ export function registerBudgetRoutes(app: FastifyInstance, db: Db, currentMonth:
     if (!zMonth.safeParse(month).success || !Number.isInteger(templateId)) {
       return reply.code(400).send({ error: 'invalid month or template id' });
     }
+    // Same window `addableToMonths` offers, and the same guard every other
+    // write route runs: a template created today does not retroactively become
+    // part of a closed month's plan.
+    const closedFailure = assertMonthWritable(month, currentMonth());
+    if (closedFailure) return reply.code(closedFailure.status).send(closedFailure.body);
+
     const template = db
       .select()
       .from(recurringTemplates)
@@ -373,15 +409,6 @@ export function registerBudgetRoutes(app: FastifyInstance, db: Db, currentMonth:
     if (!isTemplateDue(template, month)) {
       return reply.code(400).send({ error: `template is not due in ${month}` });
     }
-    // Same window `addableToMonths` offers. A closed past month is the
-    // historical record of what was planned then; a template created today does
-    // not retroactively become part of it.
-    if (month < currentMonth()) {
-      return reply.code(400).send({
-        error: `${month} is closed and cannot take new lines`,
-        hint: 'past months are a historical record; add the line to the current month or later',
-      });
-    }
 
     const failure = validateLine(db, {
       budgetId: budget.id,
@@ -395,6 +422,35 @@ export function registerBudgetRoutes(app: FastifyInstance, db: Db, currentMonth:
     const row = db.insert(budgetLines).values(snapshotLine(budget.id, template, month)).returning().get();
     return reply.code(201).send(serializeBudgetLine(row));
   });
+}
+
+/** A month closes when it ends: `month < currentMonth` is a historical record. */
+function isClosed(month: string, currentMonth: string): boolean {
+  return month < currentMonth;
+}
+
+/**
+ * The write lock (proposal 007), in one place so every budgets route rejects a
+ * closed month identically. Shaped like `validateLine`'s failure so the routes
+ * read the same either way.
+ *
+ * The boundary is strict `<`: the current month is writable all month, and
+ * budgeting ahead into future months is the point of `?open=1`. There is no
+ * escape hatch — if a closed month is wrong, the fix is data-level and
+ * deliberate, not an endpoint.
+ */
+function assertMonthWritable(
+  month: string,
+  currentMonth: string,
+): { status: number; body: Record<string, unknown> } | undefined {
+  if (!isClosed(month, currentMonth)) return undefined;
+  return {
+    status: 409,
+    body: {
+      error: `${month} is closed and cannot be changed`,
+      hint: 'past months are a historical record; budget the current month or a later one',
+    },
+  };
 }
 
 /**

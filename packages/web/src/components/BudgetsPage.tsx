@@ -128,12 +128,24 @@ export function BudgetsPage() {
 
       {isUncreated(state) && (
         <div data-testid="month-uncreated">
-          <p>{month} has not been created yet.</p>
-          <button onClick={createMonth}>Materialize month</button>
+          {state.closed ? (
+            // A closed month that was never budgeted stays that way: creating it
+            // now would snapshot today's templates as if they had been planned
+            // then (proposal 007).
+            <p data-testid="month-closed">
+              {month} is a closed month — it was never budgeted, and closed months
+              are a historical record.
+            </p>
+          ) : (
+            <>
+              <p>{month} has not been created yet.</p>
+              <button onClick={createMonth}>Materialize month</button>
+            </>
+          )}
         </div>
       )}
 
-      {state !== null && !isUncreated(state) && !editingGoals && (
+      {state !== null && !isUncreated(state) && (!editingGoals || state.closed) && (
         <BudgetMonthView
           month={state}
           categories={categories}
@@ -144,7 +156,7 @@ export function BudgetsPage() {
         />
       )}
 
-      {state !== null && !isUncreated(state) && editingGoals && (
+      {state !== null && !isUncreated(state) && editingGoals && !state.closed && (
         <BudgetMakingScreen
           month={state}
           categories={categories}

@@ -64,8 +64,24 @@ async function createTemplate(input: TemplateInput = {}) {
   return app.inject({ method: 'POST', url: '/api/recurring-templates', payload });
 }
 
+/**
+ * Materialize a month. Past months are read-only (proposal 007), so a month
+ * this file needs as **history** is created through a second app whose clock is
+ * pinned inside it — the honest simulation of a month materialized back when it
+ * was current, and the only way one can come into existence now. Months from
+ * `CURRENT_MONTH` on go through the app under test.
+ */
 async function materialize(month: string) {
-  return app.inject({ method: 'POST', url: '/api/budgets', payload: { month } });
+  if (month >= CURRENT_MONTH) {
+    return app.inject({ method: 'POST', url: '/api/budgets', payload: { month } });
+  }
+  const back = buildApp(db, { now: () => new Date(`${month}-15T12:00:00.000Z`) });
+  await back.ready();
+  try {
+    return await back.inject({ method: 'POST', url: '/api/budgets', payload: { month } });
+  } finally {
+    await back.close();
+  }
 }
 
 function linesOfMonth(month: string) {
@@ -216,13 +232,15 @@ describe('spec 003 — materialization', () => {
     await materialize('2026-05');
     expect(linesOfMonth('2026-05').map((l) => l.name)).toContain('Future');
 
-    // An ENDED template does not, even for a month inside its own window:
-    // materialization reads the same non-ended set decision 003-N enforces key
-    // uniqueness over. Reading a wider set than 003-N protects is what let an
-    // ended template and its replacement both materialize under one key.
-    // Months it was already materialized into keep their lines (criterion 15).
+    // Inside its own window it DOES produce a line — because materializing
+    // 2025-08 now means materializing it back in 2025-08, when the template had
+    // not ended yet, and that month keeps its lines forever (criterion 15).
+    // The case decision 003-N's non-ended filter used to guard was
+    // materializing such a month *today*; proposal 007 closed that path
+    // outright, and every month still open is past every ended template's
+    // endMonth, so an ended template is never due in one.
     await materialize('2025-08');
-    expect(linesOfMonth('2025-08').map((l) => l.name)).not.toContain('Ended');
+    expect(linesOfMonth('2025-08').map((l) => l.name)).toContain('Ended');
   });
 
   it('an ended template and its replacement cannot both materialize under one match key', async () => {
@@ -233,6 +251,12 @@ describe('spec 003 — materialization', () => {
       endMonth: '2026-01',
       matchNormalizedCounterparty: 'LAHITAPIOLA',
     });
+    // A month planned while the old provider was still live holds its line, and
+    // keeps it: that is the historical record, and it is now the only way a
+    // month inside the ended window can exist at all.
+    await materialize('2025-09');
+    expect(linesOfMonth('2025-09').map((l) => l.name)).toEqual(['Old insurer']);
+
     // Accepted because the first has ended — the carve-out that makes switching
     // providers possible without abandoning the counterparty.
     await createTemplate({
@@ -242,18 +266,21 @@ describe('spec 003 — materialization', () => {
       matchNormalizedCounterparty: 'LAHITAPIOLA',
     });
 
-    // A month BOTH are nominally due in (2025-09 <= the ended one's endMonth).
-    await materialize('2025-09');
+    // Every month that can still be materialized is the current one or later,
+    // i.e. after the ended template's endMonth — so it is due there alone.
+    await materialize(CURRENT_MONTH);
 
-    const keyed = linesOfMonth('2025-09').filter(
+    const keyed = linesOfMonth(CURRENT_MONTH).filter(
       (l) => l.matchNormalizedCounterparty === 'LAHITAPIOLA',
     );
     expect(keyed).toHaveLength(1);
     expect(keyed[0]!.name).toBe('New insurer');
 
     // The bill is planned once, at its real amount — not 1 300,00 €.
-    const month = await app.inject({ method: 'GET', url: '/api/budgets/2025-09' });
+    const month = await app.inject({ method: 'GET', url: `/api/budgets/${CURRENT_MONTH}` });
     expect(month.json().totals.plannedCents).toBe(70000);
+    // ...and the old month is untouched by the replacement.
+    expect(linesOfMonth('2025-09').map((l) => l.name)).toEqual(['Old insurer']);
   });
 
   it('criterion 4: editing a template amount leaves already-materialized months untouched and applies to a later due month', async () => {

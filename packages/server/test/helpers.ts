@@ -157,5 +157,11 @@ export function seedFixtureApp(db: Db): { mainAccountId: number; bufferAccountId
 
   seedTemplates(db);
   seedAssets(db);
+  // `seed-test.ts` additionally seeds two historical budget months with
+  // envelopes, for the browser tests. That is NOT mirrored here on purpose: the
+  // unit-test baselines model "no budgets yet" (003-K), and several criteria
+  // assert against a month with zero envelope lines. A test here that needs a
+  // budgeted month builds it through the routes, pinning `now` inside the month
+  // when the month is a past one (proposal 007).
   return { mainAccountId: main.id, bufferAccountId: buffer.id };
 }
