@@ -598,7 +598,8 @@ describe('commit idempotency', () => {
     });
     const first = commitImport(db, importId, { allowUncategorized: true });
     const second = commitImport(db, importId, { allowUncategorized: true });
-    expect(second).toEqual(first);
+    expect(second).toEqual({ ...first, alreadyCommitted: true });
+    expect(first.alreadyCommitted).toBe(false);
     expect(db.select().from(transactions).all()).toHaveLength(first.inserted);
   });
 

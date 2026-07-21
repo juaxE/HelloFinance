@@ -84,10 +84,15 @@ export function ReviewScreen({ detail, accounts, categories, onChange, onDone }:
   }
 
   if (result) {
+    // The counts are identical whether this call did the work or another tab
+    // already had — only `alreadyCommitted` distinguishes them, and reporting a
+    // no-op as a fresh import would credit this screen with someone else's rows.
     return (
       <section>
-        <h2>Import committed</h2>
-        <p>
+        <h2>{result.alreadyCommitted ? 'Import already committed' : 'Import committed'}</h2>
+        <p data-testid="commit-result">
+          {result.alreadyCommitted &&
+            'This import was committed elsewhere — nothing was inserted. '}
           {result.inserted} inserted, {result.duplicates} duplicates skipped
           {result.uncategorized > 0 && `, ${result.uncategorized} uncategorized`}.
         </p>

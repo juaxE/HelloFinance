@@ -64,7 +64,10 @@ export function ImportPage() {
       // result as if it had just happened.
       if (resumed.status !== 'pending_review') {
         setError(`That import is ${resumed.status} — it is no longer in review.`);
-        await refreshPending();
+        // Outside the catch below: a failing refresh must not overwrite that
+        // message with "failed to open import", which would report the one case
+        // the guard exists for as something else entirely.
+        void refreshPending().catch(() => undefined);
         return;
       }
       setDetail(resumed);

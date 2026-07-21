@@ -393,7 +393,12 @@ describe('commit-time dedup re-verification (proposal 008)', () => {
 
     const { res, body: second } = await commit(detail.importId);
     expect(res.status).toBe(200);
-    expect(second).toEqual(first);
+    expect(second).toEqual({ ...first, alreadyCommitted: true });
     expect(await countTransactions()).toBe(before);
+
+    // The counts alone cannot tell the two calls apart, which is how a second
+    // tab ends up reporting the first tab's commit as its own fresh success.
+    expect(first.alreadyCommitted).toBe(false);
+    expect(second.inserted).toBe(first.inserted);
   });
 });

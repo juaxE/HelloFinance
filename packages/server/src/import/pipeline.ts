@@ -468,6 +468,8 @@ export interface CommitResult {
   inserted: number;
   duplicates: number;
   uncategorized: number;
+  /** The import was already committed; nothing was inserted by this call. */
+  alreadyCommitted: boolean;
 }
 
 /** Spec 002 "Commit". Idempotent: re-running on an already-committed import is a no-op. */
@@ -579,7 +581,12 @@ export function commitImport(
       .run();
     tx.delete(stagedTransactions).where(eq(stagedTransactions.importId, importId)).run();
 
-    return { inserted: insertable.length, duplicates, uncategorized: unlabeledCount };
+    return {
+      inserted: insertable.length,
+      duplicates,
+      uncategorized: unlabeledCount,
+      alreadyCommitted: false,
+    };
   });
 }
 
@@ -606,6 +613,7 @@ function computeCommittedCounts(db: Db, importRow: ImportRow): CommitResult {
     inserted: committed.length,
     duplicates: importRow.duplicateCount,
     uncategorized: committed.filter((t) => t.categoryId === null).length,
+    alreadyCommitted: true,
   };
 }
 

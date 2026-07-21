@@ -131,6 +131,10 @@ export const zCommitResult = z.object({
   inserted: z.number().int(),
   duplicates: z.number().int(),
   uncategorized: z.number().int(),
+  // True when the import was already committed and this call only recomputed
+  // its counts. Without it a second tab reads the first tab's commit as its own
+  // fresh success — the numbers are identical either way.
+  alreadyCommitted: z.boolean(),
 });
 export type CommitResult = z.infer<typeof zCommitResult>;
 

@@ -200,6 +200,11 @@ learned rules.
 - Playwright runs `workers: 1`: every spec shares one seeded `data/app.db` and several
   mutate it. Parallel specs interleave with the ones asserting the DOM against a
   freshly-fetched API figure, which is a race, not a flake to retry away.
+- `CommitResult.alreadyCommitted` is the only thing separating a fresh commit from the
+  idempotent re-commit no-op — the counts are identical, because the no-op recomputes
+  them from the committed rows. Resume makes two tabs on one import a real scenario, so
+  a screen that drops the flag reports the *other* tab's rows as its own success. The
+  review screen must keep saying which one happened.
 - The e2e resume spec must never commit or discard the seeded pending overlap import —
   later specs assert figures that assume it stays pending. It *does* mutate it: proving
   a resumed decision survives a reload requires writing one, so it leaves a
