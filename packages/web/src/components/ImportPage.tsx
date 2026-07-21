@@ -1,26 +1,42 @@
-import { useEffect, useState } from 'react';
-import type { Account, Category, ImportDetail } from '@finance/shared';
+import { useCallback, useEffect, useState } from 'react';
+import type { Account, Category, ImportDetail, ImportSummary } from '@finance/shared';
 import { api } from '../api';
+import { formatDate } from '../format';
 import { ReviewScreen } from './ReviewScreen';
+
+/** Epoch-ms timestamp -> the local calendar day, in the app's DD.MM.YYYY form. */
+function formatCreatedAt(epochMs: number): string {
+  const d = new Date(epochMs);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return formatDate(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`);
+}
 
 /** Spec 002 "Import page": drag-drop / file picker + account selector -> Analyze. */
 export function ImportPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [pending, setPending] = useState<ImportSummary[]>([]);
   const [accountId, setAccountId] = useState<string>('');
   const [file, setFile] = useState<File | null>(null);
   const [detail, setDetail] = useState<ImportDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // A review lives in `staged_transactions`, not in this component's state —
+  // closing the tab mid-review must not orphan hours of labeling, so every
+  // pending import is offered back on mount and after each commit/discard.
+  const refreshPending = useCallback(async () => {
+    setPending(await api.listImports('pending_review'));
+  }, []);
+
   useEffect(() => {
-    Promise.all([api.listAccounts(), api.listCategories()])
+    Promise.all([api.listAccounts(), api.listCategories(), refreshPending()])
       .then(([a, c]) => {
         setAccounts(a);
         setCategories(c);
       })
       .catch((e) => setError(e instanceof Error ? e.message : 'failed to load'));
-  }, []);
+  }, [refreshPending]);
 
   async function handleAnalyze() {
     if (!accountId || !file) return;
@@ -36,6 +52,18 @@ export function ImportPage() {
     }
   }
 
+  async function handleResume(importId: number) {
+    setLoading(true);
+    setError(null);
+    try {
+      setDetail(await api.getImport(importId));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'failed to open import');
+    } finally {
+      setLoading(false);
+    }
+  }
+
   if (detail) {
     return (
       <ReviewScreen
@@ -46,6 +74,7 @@ export function ImportPage() {
         onDone={() => {
           setDetail(null);
           setFile(null);
+          void refreshPending().catch(() => undefined);
         }}
       />
     );
@@ -59,6 +88,43 @@ export function ImportPage() {
           {error}
         </p>
       )}
+
+      {pending.length > 0 && (
+        <div data-testid="pending-imports" style={{ marginBottom: '1.5rem' }}>
+          <h3>Pending review ({pending.length})</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>File</th>
+                <th>Account</th>
+                <th>Uploaded</th>
+                <th>Rows</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {pending.map((imp) => (
+                <tr key={imp.id} data-testid="pending-import-row">
+                  <td>{imp.filename}</td>
+                  <td>
+                    {accounts.find((a) => a.id === imp.accountId)?.name ?? `#${imp.accountId}`}
+                  </td>
+                  <td>{formatCreatedAt(imp.createdAt)}</td>
+                  <td>
+                    {imp.rowCount - imp.duplicateCount} new, {imp.duplicateCount} duplicates
+                  </td>
+                  <td>
+                    <button onClick={() => handleResume(imp.id)} disabled={loading}>
+                      Resume
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       <div style={{ display: 'flex', gap: '1rem', alignItems: 'end', flexWrap: 'wrap' }}>
         <label>
           Account

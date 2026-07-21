@@ -189,9 +189,20 @@ learned rules.
 - The relabel sweep in `routes/transactions.ts` filters `category_source='rule'` and
   therefore *cannot* see uncategorized rows — `ck_transactions_category_source` forces
   their source null. Do not "simplify" triage by routing it through that endpoint.
+- `commitImport` re-verifies dedup inside its transaction, against the committed
+  table, and skips-and-counts rows that became duplicates since analyze — committing
+  stale staging is a re-import, never an error. `dup_state` is a snapshot of the world
+  at analyze time and staging outlives it (a second analyze of the same file, a review
+  resumed later). Do not "simplify" it back to trusting `dup_state`; analyze and commit
+  share `findExistingDedupMatches` so the two notions of "duplicate" cannot drift. The
+  `allowUncategorized` check runs *after* the re-verification — a stale uncategorized
+  row must not force the flag for rows that will never insert.
 - Playwright runs `workers: 1`: every spec shares one seeded `data/app.db` and several
   mutate it. Parallel specs interleave with the ones asserting the DOM against a
   freshly-fetched API figure, which is a race, not a flake to retry away.
+- The e2e resume spec reads the seeded pending overlap import and must never commit or
+  discard it — later specs assert figures that assume it stays pending. It finds the
+  import through `GET /api/imports`, never by hardcoded id.
 - A running `npm run dev` server **hijacks the e2e suite**: `reuseExistingServer`
   adopts whatever answers on :3001 without applying the config's `FINANCE_NOW`, and
   that process keeps an open handle to the `data/app.db` that `seed:test` unlinked —

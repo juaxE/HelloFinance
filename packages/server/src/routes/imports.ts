@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
-import { zCommitRequest, zGroupPatch, zRowPatch } from '@finance/shared';
+import { zCommitRequest, zGroupPatch, zImportStatus, zRowPatch } from '@finance/shared';
 import type { Db } from '../db/client';
 import { BankAdapterParseError } from '../import/adapter';
 import {
@@ -9,9 +9,11 @@ import {
   discardImport,
   extendHistory,
   getImportDetail,
+  listImports,
   updateGroup,
   updateRow,
 } from '../import/pipeline';
+import { serializeImport } from './serialize';
 
 /**
  * CSV import & review pipeline (spec 002). Upload -> analyze (parse, dedup,
@@ -62,6 +64,20 @@ export function registerImportRoutes(app: FastifyInstance, db: Db): void {
       if (handleImportError(err, reply)) return;
       throw err;
     }
+  });
+
+  // The resume list: without it a review interrupted mid-way is unreachable
+  // and its staged decisions are orphaned.
+  app.get('/api/imports', async (req, reply) => {
+    const { status } = req.query as { status?: string };
+    if (status !== undefined) {
+      const parsed = zImportStatus.safeParse(status);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: `unknown status '${status}'` });
+      }
+      return listImports(db, parsed.data).map(serializeImport);
+    }
+    return listImports(db).map(serializeImport);
   });
 
   app.get('/api/imports/:id', async (req, reply) => {

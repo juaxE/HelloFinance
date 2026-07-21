@@ -72,6 +72,24 @@ export const zBeforeOpeningSummary = z.object({
 });
 export type BeforeOpeningSummary = z.infer<typeof zBeforeOpeningSummary>;
 
+/**
+ * One row of `GET /api/imports` — the list/resume view. Deliberately flat: no
+ * staged rows, so listing stays cheap regardless of how big an import was.
+ */
+export const zImportSummary = z.object({
+  id: z.number().int(),
+  filename: z.string(),
+  accountId: z.number().int(),
+  bank: z.literal('s-pankki'),
+  status: zImportStatus,
+  encoding: zDetectedEncoding,
+  rowCount: z.number().int(),
+  insertedCount: z.number().int(),
+  duplicateCount: z.number().int(),
+  createdAt: z.number().int(),
+});
+export type ImportSummary = z.infer<typeof zImportSummary>;
+
 /** Response for both `POST /api/imports` and `GET /api/imports/:id`. */
 export const zImportDetail = z.object({
   importId: z.number().int(),
